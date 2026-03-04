@@ -8,40 +8,67 @@ ToolRegistry& ToolRegistry::instance() {
     return registry;
 }
 
+void ToolRegistry::add_tool(std::shared_ptr<Tool> tool) {
+    if (!tool) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    tools_[tool->name()] = tool;
+    spdlog::info("Registered tool: {}", tool->name());
+}
+
 void ToolRegistry::unregister_tool(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
     tools_.erase(name);
+    spdlog::info("Unregistered tool: {}", name);
 }
 
 std::shared_ptr<Tool> ToolRegistry::get_tool(const std::string& name) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = tools_.find(name);
-    return it != tools_.end() ? it->second : nullptr;
+    if (it != tools_.end()) {
+        return it->second;
+    }
+    return nullptr;
 }
 
 std::vector<std::shared_ptr<Tool>> ToolRegistry::get_all_tools() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::shared_ptr<Tool>> result;
-    for (const auto& [_, tool] : tools_) result.push_back(tool);
+    result.reserve(tools_.size());
+    for (const auto& [name, tool] : tools_) {
+        result.push_back(tool);
+    }
     return result;
 }
 
 std::vector<nlohmann::json> ToolRegistry::get_tool_schemas() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<nlohmann::json> schemas;
-    for (const auto& [_, tool] : tools_) schemas.push_back(tool->schema().to_json());
+    schemas.reserve(tools_.size());
+    for (const auto& [name, tool] : tools_) {
+        schemas.push_back(tool->schema().to_json());
+    }
     return schemas;
 }
 
-ToolResult ToolRegistry::execute_tool(const std::string& name, const nlohmann::json& arguments) {
+ToolResult ToolRegistry::execute_tool(
+    const std::string& name,
+    const nlohmann::json& arguments
+) {
     auto tool = get_tool(name);
-    if (!tool) return ToolResult::error("Tool not found: " + name);
+    if (!tool) {
+        spdlog::error("Tool not found: {}", name);
+        return ToolResult::error("Tool not found: " + name);
+    }
+    
+    spdlog::info("Executing tool '{}' with args: {}", name, arguments.dump());
     
     try {
-        spdlog::debug("Executing tool '{}' with args: {}", name, arguments.dump());
-        return tool->execute(arguments);
+        auto result = tool->execute(arguments);
+        spdlog::info("Tool '{}' completed: success={}", name, result.success);
+        return result;
     } catch (const std::exception& e) {
-        return ToolResult::error(std::string("Execution error: ") + e.what());
+        spdlog::error("Tool '{}' failed: {}", name, e.what());
+        return ToolResult::error(std::string("Exception: ") + e.what());
     }
 }
 
@@ -53,7 +80,10 @@ bool ToolRegistry::has_tool(const std::string& name) const {
 std::vector<std::string> ToolRegistry::list_tools() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::string> names;
-    for (const auto& [name, _] : tools_) names.push_back(name);
+    names.reserve(tools_.size());
+    for (const auto& [name, tool] : tools_) {
+        names.push_back(name);
+    }
     return names;
 }
 

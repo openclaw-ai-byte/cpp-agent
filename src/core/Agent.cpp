@@ -152,7 +152,7 @@ std::future<std::string> Agent::execute_task(const std::string& task_description
 }
 
 void Agent::register_tool(std::shared_ptr<Tool> tool) {
-    ToolRegistry::instance().register_tool<Tool>(*tool);
+    ToolRegistry::instance().add_tool(tool);
 }
 
 void Agent::unregister_tool(const std::string& name) {
