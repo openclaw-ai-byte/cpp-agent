@@ -35,10 +35,13 @@ target("cpp-agent")
     add_includedirs("include", {public = true})
     
     add_files("src/main.cpp")
+    add_files("src/api/*.cpp")
     
     -- System libraries
     if is_plat("linux") then
         add_syslinks("pthread", "dl", "stdc++fs")
-    elseif is_plat("macosx", "windows") then
+    elseif is_plat("macosx") then
         add_syslinks("pthread", "dl")
+    elseif is_plat("windows") then
+        add_syslinks("ws2_32", "wsock32")
     end
