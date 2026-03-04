@@ -23,25 +23,15 @@ public:
     }
     
     ToolSchema schema() const override {
-        return ToolSchema{
-            name(),
-            description(),
-            {
-                {"type", "object"},
-                {"properties", {
-                    {"query", {
-                        {"type", "string"},
-                        {"description", "The search query"}
-                    }},
-                    {"num_results", {
-                        {"type", "integer"},
-                        {"description", "Number of results to return"},
-                        {"default", 5}
-                    }}
-                }},
-                {"required", {"query"}}
-            }
-        };
+        nlohmann::json params;
+        params["type"] = "object";
+        params["properties"]["query"]["type"] = "string";
+        params["properties"]["query"]["description"] = "The search query";
+        params["properties"]["num_results"]["type"] = "integer";
+        params["properties"]["num_results"]["description"] = "Number of results to return";
+        params["properties"]["num_results"]["default"] = 5;
+        params["required"] = {"query"};
+        return ToolSchema{name(), description(), params};
     }
     
     ToolResult execute(const nlohmann::json& args) override {
@@ -69,30 +59,18 @@ public:
     }
     
     ToolSchema schema() const override {
-        return ToolSchema{
-            name(),
-            description(),
-            {
-                {"type", "object"},
-                {"properties", {
-                    {"path", {
-                        {"type", "string"},
-                        {"description", "The file path to read"}
-                    }},
-                    {"offset", {
-                        {"type", "integer"},
-                        {"description", "Line number to start reading from (1-indexed)"},
-                        {"default", 1}
-                    }},
-                    {"limit", {
-                        {"type", "integer"},
-                        {"description", "Maximum number of lines to read"},
-                        {"default", 100}
-                    }}
-                }},
-                {"required", {"path"}}
-            }
-        };
+        nlohmann::json params;
+        params["type"] = "object";
+        params["properties"]["path"]["type"] = "string";
+        params["properties"]["path"]["description"] = "The file path to read";
+        params["properties"]["offset"]["type"] = "integer";
+        params["properties"]["offset"]["description"] = "Line number to start reading from (1-indexed)";
+        params["properties"]["offset"]["default"] = 1;
+        params["properties"]["limit"]["type"] = "integer";
+        params["properties"]["limit"]["description"] = "Maximum number of lines to read";
+        params["properties"]["limit"]["default"] = 100;
+        params["required"] = {"path"};
+        return ToolSchema{name(), description(), params};
     }
     
     ToolResult execute(const nlohmann::json& args) override {
@@ -146,24 +124,14 @@ public:
     }
     
     ToolSchema schema() const override {
-        return ToolSchema{
-            name(),
-            description(),
-            {
-                {"type", "object"},
-                {"properties", {
-                    {"path", {
-                        {"type", "string"},
-                        {"description", "The file path to write"}
-                    }},
-                    {"content", {
-                        {"type", "string"},
-                        {"description", "The content to write to the file"}
-                    }}
-                }},
-                {"required", {"path", "content"}}
-            }
-        };
+        nlohmann::json params;
+        params["type"] = "object";
+        params["properties"]["path"]["type"] = "string";
+        params["properties"]["path"]["description"] = "The file path to write";
+        params["properties"]["content"]["type"] = "string";
+        params["properties"]["content"]["description"] = "The content to write to the file";
+        params["required"] = {"path", "content"};
+        return ToolSchema{name(), description(), params};
     }
     
     ToolResult execute(const nlohmann::json& args) override {
@@ -203,26 +171,15 @@ public:
     }
     
     ToolSchema schema() const override {
-        return ToolSchema{
-            name(),
-            description(),
-            {
-                {"type", "object"},
-                {"properties", {
-                    {"path", {
-                        {"type", "string"},
-                        {"description", "The directory path to list"},
-                        {"default", "."}
-                    }},
-                    {"recursive", {
-                        {"type", "boolean"},
-                        {"description", "List recursively"},
-                        {"default", false}
-                    }}
-                }},
-                {"required", {}}
-            }
-        };
+        nlohmann::json params;
+        params["type"] = "object";
+        params["properties"]["path"]["type"] = "string";
+        params["properties"]["path"]["description"] = "The directory path to list";
+        params["properties"]["path"]["default"] = ".";
+        params["properties"]["recursive"]["type"] = "boolean";
+        params["properties"]["recursive"]["description"] = "List recursively";
+        params["properties"]["recursive"]["default"] = false;
+        return ToolSchema{name(), description(), params};
     }
     
     ToolResult execute(const nlohmann::json& args) override {
@@ -281,25 +238,15 @@ public:
     }
     
     ToolSchema schema() const override {
-        return ToolSchema{
-            name(),
-            description(),
-            {
-                {"type", "object"},
-                {"properties", {
-                    {"command", {
-                        {"type", "string"},
-                        {"description", "The command to execute"}
-                    }},
-                    {"timeout", {
-                        {"type", "integer"},
-                        {"description", "Timeout in seconds"},
-                        {"default", 30}
-                    }}
-                }},
-                {"required", {"command"}}
-            }
-        };
+        nlohmann::json params;
+        params["type"] = "object";
+        params["properties"]["command"]["type"] = "string";
+        params["properties"]["command"]["description"] = "The command to execute";
+        params["properties"]["timeout"]["type"] = "integer";
+        params["properties"]["timeout"]["description"] = "Timeout in seconds";
+        params["properties"]["timeout"]["default"] = 30;
+        params["required"] = {"command"};
+        return ToolSchema{name(), description(), params};
     }
     
     ToolResult execute(const nlohmann::json& args) override {
@@ -342,11 +289,10 @@ public:
     }
     
     ToolSchema schema() const override {
-        return ToolSchema{
-            name(),
-            description(),
-            {{"type", "object"}, {"properties", {}}}
-        };
+        nlohmann::json params;
+        params["type"] = "object";
+        params["properties"] = nlohmann::json::object();
+        return ToolSchema{name(), description(), params};
     }
     
     ToolResult execute(const nlohmann::json& args) override {
