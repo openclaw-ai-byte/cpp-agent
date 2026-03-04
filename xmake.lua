@@ -18,7 +18,8 @@ target("cpp-agent")
     
     add_packages("boost", "nlohmann_json", "spdlog", "sqlite3", "libcurl")
     
-    add_includedirs("src", "include")
+    -- Include headers from include/ directory
+    add_includedirs("include", {public = true})
     add_files("src/**/*.cpp")
     
     add_cxxflags("-Wall", "-Wextra", "-Wpedantic")
@@ -30,5 +31,5 @@ target("agent-core")
     
     add_packages("boost", "nlohmann_json", "spdlog", "sqlite3", "libcurl")
     
-    add_includedirs("include")
+    add_includedirs("include", {public = true})
     add_files("src/core/**/*.cpp", "src/tools/**/*.cpp", "src/skills/**/*.cpp", "src/mcp/**/*.cpp")
