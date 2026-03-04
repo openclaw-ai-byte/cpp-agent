@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 #include <functional>
+#include <future>
 #include <nlohmann/json.hpp>
 
 namespace agent {
@@ -29,18 +30,21 @@ public:
     explicit LLMClient(const LLMConfig& config);
     ~LLMClient();
     
+    // Synchronous chat
     ChatResponse chat(
         const std::vector<nlohmann::json>& messages,
         const std::vector<nlohmann::json>& tools = {}
     );
     
-    void chat_stream(
+    // Streaming chat
+    void chatStream(
         const std::vector<nlohmann::json>& messages,
         const std::vector<nlohmann::json>& tools,
-        std::function<void(const std::string&)> on_chunk,
-        std::function<void(const ChatResponse&)> on_complete
+        std::function<void(const std::string&)> onChunk,
+        std::function<void(const ChatResponse&)> onComplete
     );
     
+    // Embeddings
     std::vector<float> embed(const std::string& text);
     
 private:

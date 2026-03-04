@@ -5,7 +5,6 @@
 #include <vector>
 #include <functional>
 #include <future>
-#include <unordered_map>
 #include <nlohmann/json.hpp>
 
 namespace agent {
@@ -14,7 +13,6 @@ namespace agent {
 class LLMClient;
 class ToolRegistry;
 class SkillRegistry;
-class MCPClient;
 
 // Message types
 struct Message {
@@ -23,16 +21,9 @@ struct Message {
     std::string name;  // For tool messages
     std::string tool_call_id;
     
+    // Serialization
     nlohmann::json to_json() const;
     static Message from_json(const nlohmann::json& j);
-};
-
-// Tool call structure
-struct ToolCall {
-    std::string id;
-    std::string type;
-    std::string function_name;
-    nlohmann::json arguments;
 };
 
 // Agent configuration
@@ -55,10 +46,6 @@ public:
     
     // Core functionality
     std::future<std::string> chat(const std::string& user_input);
-    std::future<std::string> chat_stream(
-        const std::string& user_input,
-        std::function<void(const std::string&)> callback
-    );
     
     // Task execution
     std::future<std::string> execute_task(const std::string& task_description);
@@ -72,9 +59,6 @@ public:
     void register_skill(std::shared_ptr<class Skill> skill);
     void load_skill_from_directory(const std::string& path);
     std::vector<std::string> list_skills() const;
-    
-    // MCP support
-    void connect_mcp_server(const std::string& endpoint);
     
     // Conversation management
     void clear_conversation();
