@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+.xmake/
+.vscode/
+.idea/
+*.log
+*.sqlite
+.env
+.DS_Store
+Thumbs.db
