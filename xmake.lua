@@ -12,17 +12,29 @@ add_requires("sqlite3")
 add_requires("boost", {configs = {filesystem = true, system = true, asio = true}})
 add_requires("libcurl")
 
+-- Core library (contains all agent functionality)
+target("agent-core")
+    set_kind("static")
+    
+    add_packages("boost", "nlohmann_json", "spdlog", "sqlite3", "libcurl")
+    add_includedirs("include", {public = true})
+    
+    add_files("src/core/*.cpp")
+    add_files("src/tools/*.cpp")
+    add_files("src/skills/*.cpp")
+    add_files("src/mcp/*.cpp")
+    
+    add_cxxflags("-Wall", "-Wextra", "-Wpedantic")
+
 -- Main executable
 target("cpp-agent")
     set_kind("binary")
     
+    add_deps("agent-core")
     add_packages("boost", "nlohmann_json", "spdlog", "sqlite3", "libcurl")
-    
-    -- Include headers from include/ directory
     add_includedirs("include", {public = true})
-    add_files("src/**/*.cpp")
     
-    add_cxxflags("-Wall", "-Wextra", "-Wpedantic")
+    add_files("src/main.cpp")
     
     -- System libraries
     if is_plat("linux") then
@@ -30,12 +42,3 @@ target("cpp-agent")
     elseif is_plat("macosx", "windows") then
         add_syslinks("pthread", "dl")
     end
-
--- Library target (optional, for modular build)
-target("agent-core")
-    set_kind("static")
-    
-    add_packages("boost", "nlohmann_json", "spdlog", "sqlite3", "libcurl")
-    
-    add_includedirs("include", {public = true})
-    add_files("src/core/**/*.cpp", "src/tools/**/*.cpp", "src/skills/**/*.cpp", "src/mcp/**/*.cpp")
