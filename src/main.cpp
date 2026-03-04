@@ -1,5 +1,6 @@
 #include "core/Agent.hpp"
 #include "tools/ToolRegistry.hpp"
+#include "skills/SkillRegistry.hpp"
 #include "http/httplib.h"
 #include <spdlog/spdlog.h>
 #include <iostream>
