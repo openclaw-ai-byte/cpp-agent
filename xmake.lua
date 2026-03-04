@@ -23,7 +23,13 @@ target("cpp-agent")
     add_files("src/**/*.cpp")
     
     add_cxxflags("-Wall", "-Wextra", "-Wpedantic")
-    add_syslinks("pthread", "dl")
+    
+    -- System libraries
+    if is_plat("linux") then
+        add_syslinks("pthread", "dl", "stdc++fs")
+    elseif is_plat("macosx", "windows") then
+        add_syslinks("pthread", "dl")
+    end
 
 -- Library target (optional, for modular build)
 target("agent-core")

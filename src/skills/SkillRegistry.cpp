@@ -1,8 +1,10 @@
 #include "skills/SkillRegistry.hpp"
 #include "skills/Skill.hpp"
 #include <spdlog/spdlog.h>
-#include <filesystem>
+#include <boost/filesystem.hpp>
 #include <fstream>
+
+namespace fs = boost::filesystem;
 
 namespace agent {
 
@@ -29,21 +31,21 @@ void SkillRegistry::unregister_skill(const std::string& name) {
     }
 }
 
-void SkillRegistry::load_from_directory(const std::filesystem::path& dir) {
-    if (!std::filesystem::exists(dir)) {
+void SkillRegistry::load_from_directory(const fs::path& dir) {
+    if (!fs::exists(dir)) {
         spdlog::debug("Skill directory not found: {}", dir.string());
         return;
     }
     
-    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-        if (entry.is_directory()) {
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (fs::is_directory(entry)) {
             // Look for skill definition files
-            std::filesystem::path skill_file = entry.path() / "skill.yaml";
-            if (!std::filesystem::exists(skill_file)) {
+            fs::path skill_file = entry.path() / "skill.yaml";
+            if (!fs::exists(skill_file)) {
                 skill_file = entry.path() / "skill.json";
             }
             
-            if (std::filesystem::exists(skill_file)) {
+            if (fs::exists(skill_file)) {
                 spdlog::info("Found skill definition: {}", skill_file.string());
                 // TODO: Implement skill loading from YAML/JSON
             }

@@ -4,8 +4,8 @@
 #include <memory>
 #include <unordered_map>
 #include <vector>
-#include <filesystem>
 #include <mutex>
+#include <boost/filesystem.hpp>
 
 namespace agent {
 
@@ -18,7 +18,7 @@ public:
     void unregister_skill(const std::string& name);
     
     // Loading skills from directories
-    void load_from_directory(const std::filesystem::path& dir);
+    void load_from_directory(const boost::filesystem::path& dir);
     
     // Retrieval
     std::shared_ptr<Skill> get_skill(const std::string& name) const;
