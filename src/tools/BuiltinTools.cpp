@@ -8,18 +8,19 @@
 #include <sstream>
 #include <iomanip>
 #include <array>
+#include <curl/curl.h>
 
 namespace fs = boost::filesystem;
 
 namespace agent {
 
-// Web Search Tool
+// Web Search Tool - Uses DuckDuckGo Instant Answer API
 class WebSearchTool : public Tool {
 public:
     std::string name() const override { return "web_search"; }
     
     std::string description() const override {
-        return "Search the web for information. Returns relevant search results.";
+        return "Search the web for information using DuckDuckGo. Returns relevant search results.";
     }
     
     ToolSchema schema() const override {
@@ -28,7 +29,7 @@ public:
         params["properties"]["query"]["type"] = "string";
         params["properties"]["query"]["description"] = "The search query";
         params["properties"]["num_results"]["type"] = "integer";
-        params["properties"]["num_results"]["description"] = "Number of results to return";
+        params["properties"]["num_results"]["description"] = "Number of results to return (max 10)";
         params["properties"]["num_results"]["default"] = 5;
         params["required"] = {"query"};
         return ToolSchema{name(), description(), params};
@@ -37,15 +38,172 @@ public:
     ToolResult execute(const nlohmann::json& args) override {
         std::string query = args["query"];
         int num_results = args.value("num_results", 5);
+        num_results = std::min(num_results, 10);  // Cap at 10
         
-        // TODO: Implement actual web search API call
+        // DuckDuckGo HTML search fallback
+        std::string url = "https://html.duckduckgo.com/html/?q=" + urlEncode(query);
+        
+        std::string response = httpGet(url);
+        if (response.empty()) {
+            return ToolResult::error("Failed to perform web search");
+        }
+        
+        // Parse HTML results
+        std::vector<nlohmann::json> results;
+        size_t pos = 0;
+        int count = 0;
+        
+        // DuckDuckGo HTML uses class="result__a" for titles and class="result__url" for URLs
+        while ((pos = response.find("class=\"result__a\"", pos)) != std::string::npos && count < num_results) {
+            // Extract title
+            size_t title_start = response.find('>', pos);
+            size_t title_end = response.find("</a>", title_start);
+            if (title_start == std::string::npos || title_end == std::string::npos) {
+                pos++;
+                continue;
+            }
+            
+            std::string title = response.substr(title_start + 1, title_end - title_start - 1);
+            title = stripHtml(title);
+            
+            // Extract URL (from href)
+            size_t href_start = response.rfind("href=\"", pos);
+            size_t href_end = response.find('"', href_start + 6);
+            if (href_start != std::string::npos && href_end != std::string::npos) {
+                std::string result_url = response.substr(href_start + 6, href_end - href_start - 6);
+                
+                // DuckDuckGo uses redirect URLs, extract actual URL
+                if (result_url.find("uddg=") != std::string::npos) {
+                    size_t uddg_pos = result_url.find("uddg=");
+                    result_url = result_url.substr(uddg_pos + 5);
+                    result_url = urlDecode(result_url);
+                }
+                
+                // Extract snippet (text after the link)
+                size_t snippet_start = title_end + 4;
+                size_t snippet_end = response.find("<a class=\"result__snippet\"", snippet_start);
+                if (snippet_end == std::string::npos) {
+                    snippet_end = response.find("</div>", snippet_start);
+                }
+                std::string snippet;
+                if (snippet_start < snippet_end && snippet_end != std::string::npos) {
+                    snippet = response.substr(snippet_start, snippet_end - snippet_start);
+                    snippet = stripHtml(snippet);
+                    // Clean up snippet
+                    size_t first_char = snippet.find_first_not_of(" \t\n\r");
+                    if (first_char != std::string::npos) {
+                        snippet = snippet.substr(first_char);
+                    }
+                    if (snippet.length() > 200) {
+                        snippet = snippet.substr(0, 197) + "...";
+                    }
+                }
+                
+                if (!title.empty() && !result_url.empty()) {
+                    results.push_back({
+                        {"title", title},
+                        {"url", result_url},
+                        {"snippet", snippet}
+                    });
+                    count++;
+                }
+            }
+            
+            pos = title_end;
+        }
+        
         return ToolResult::ok(nlohmann::json{
             {"query", query},
-            {"results", {
-                {{"title", "Example Result 1"}, {"url", "https://example.com/1"}, {"snippet", "This is an example search result..."}},
-                {{"title", "Example Result 2"}, {"url", "https://example.com/2"}, {"snippet", "Another example result..."}}
-            }}
+            {"results", results},
+            {"count", results.size()}
         });
+    }
+    
+private:
+    static std::string urlEncode(const std::string& s) {
+        std::string result;
+        for (char c : s) {
+            if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+                result += c;
+            } else {
+                result += '%';
+                char hex[3];
+                snprintf(hex, sizeof(hex), "%02X", (unsigned char)c);
+                result += hex;
+            }
+        }
+        return result;
+    }
+    
+    static std::string urlDecode(const std::string& s) {
+        std::string result;
+        for (size_t i = 0; i < s.length(); ++i) {
+            if (s[i] == '%' && i + 2 < s.length()) {
+                int val;
+                sscanf(s.substr(i + 1, 2).c_str(), "%x", &val);
+                result += (char)val;
+                i += 2;
+            } else if (s[i] == '+') {
+                result += ' ';
+            } else {
+                result += s[i];
+            }
+        }
+        return result;
+    }
+    
+    static std::string stripHtml(const std::string& html) {
+        std::string result;
+        bool in_tag = false;
+        for (char c : html) {
+            if (c == '<') {
+                in_tag = true;
+            } else if (c == '>') {
+                in_tag = false;
+            } else if (!in_tag) {
+                result += c;
+            }
+        }
+        // Decode common entities
+        size_t pos;
+        while ((pos = result.find("&amp;")) != std::string::npos) {
+            result.replace(pos, 5, "&");
+        }
+        while ((pos = result.find("&lt;")) != std::string::npos) {
+            result.replace(pos, 4, "<");
+        }
+        while ((pos = result.find("&gt;")) != std::string::npos) {
+            result.replace(pos, 4, ">");
+        }
+        while ((pos = result.find("&quot;")) != std::string::npos) {
+            result.replace(pos, 6, "\"");
+        }
+        while ((pos = result.find("&#39;")) != std::string::npos) {
+            result.replace(pos, 5, "'");
+        }
+        return result;
+    }
+    
+    static std::string httpGet(const std::string& url) {
+        std::string response;
+        CURL* curl = curl_easy_init();
+        if (!curl) return "";
+        
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](void* contents, size_t size, size_t nmemb, void* userp) {
+            ((std::string*)userp)->append((char*)contents, size * nmemb);
+            return size * nmemb;
+        });
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (compatible; CppAgent/1.0)");
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        
+        CURLcode res = curl_easy_perform(curl);
+        curl_easy_cleanup(curl);
+        
+        return res == CURLE_OK ? response : "";
     }
 };
 

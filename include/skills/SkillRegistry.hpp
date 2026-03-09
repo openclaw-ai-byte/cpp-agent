@@ -19,6 +19,8 @@ public:
     
     // Loading skills from directories
     void load_from_directory(const boost::filesystem::path& dir);
+    void load_skill_yaml(const boost::filesystem::path& path);
+    void load_skill_json(const boost::filesystem::path& path);
     
     // Retrieval
     std::shared_ptr<Skill> get_skill(const std::string& name) const;

@@ -1,0 +1,23 @@
+# Example Skill Configuration
+name: example
+version: 1.0.0
+description: An example skill demonstrating YAML configuration
+author: cppagent
+tags:
+  - demo
+  - example
+
+actions:
+  greet:
+    description: "Greet the user"
+    command: "echo 'Hello from cppagent!'"
+  
+  echo:
+    description: "Echo a message"
+    command: "echo '${message}'"
+    params:
+      message: "The message to echo"
+  
+  date:
+    description: "Get current date and time"
+    command: "date"

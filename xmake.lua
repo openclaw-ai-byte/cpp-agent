@@ -11,12 +11,13 @@ add_requires("spdlog")
 add_requires("sqlite3")
 add_requires("boost", {configs = {filesystem = true, system = true, asio = true, context = true, fiber = true}})
 add_requires("libcurl")
+add_requires("yaml-cpp")
 
 -- Core library (contains all agent functionality)
 target("agent-core")
     set_kind("static")
     
-    add_packages("boost", "nlohmann_json", "spdlog", "sqlite3", "libcurl")
+    add_packages("boost", "nlohmann_json", "spdlog", "sqlite3", "libcurl", "yaml-cpp")
     add_includedirs("include", {public = true})
     
     add_files("src/core/*.cpp")
@@ -32,7 +33,7 @@ target("cpp-agent")
     set_kind("binary")
     
     add_deps("agent-core")
-    add_packages("boost", "nlohmann_json", "spdlog", "sqlite3", "libcurl")
+    add_packages("boost", "nlohmann_json", "spdlog", "sqlite3", "libcurl", "yaml-cpp")
     add_includedirs("include", {public = true})
     
     add_files("src/main.cpp")

@@ -1,0 +1,23 @@
+{
+  "name": "weather",
+  "version": "1.0.0",
+  "description": "Get weather information using wttr.in",
+  "author": "cppagent",
+  "tags": ["weather", "utility"],
+  "actions": {
+    "current": {
+      "description": "Get current weather for a location",
+      "command": "curl -s 'https://wttr.in/${location}?format=3'",
+      "params": {
+        "location": "City name or coordinates"
+      }
+    },
+    "forecast": {
+      "description": "Get weather forecast for a location",
+      "command": "curl -s 'https://wttr.in/${location}'",
+      "params": {
+        "location": "City name or coordinates"
+      }
+    }
+  }
+}

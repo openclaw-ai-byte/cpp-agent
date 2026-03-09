@@ -337,7 +337,7 @@ public:
         ChatResponse final_response;
         final_response.success = true;
         std::string accumulated_content;
-        std::vector<nlohmann::json> tool_calls;
+        std::map<int, nlohmann::json> tool_calls_map;  // index -> accumulated tool call
         
         auto callback = [&](const std::string& chunk) -> bool {
             auto chunks = parseSSE(chunk);
@@ -354,8 +354,47 @@ public:
                 accumulated_content += c.delta;
                 
                 if (c.tool_call_delta.has_value()) {
-                    // Handle tool call deltas
-                    // TODO: accumulate tool call deltas
+                    // Accumulate tool call deltas
+                    auto& delta_array = c.tool_call_delta.value();
+                    if (delta_array.is_array()) {
+                        for (const auto& tc_delta : delta_array) {
+                            int index = tc_delta.value("index", 0);
+                            
+                            // Initialize or update tool call
+                            if (tool_calls_map.find(index) == tool_calls_map.end()) {
+                                tool_calls_map[index] = {
+                                    {"id", ""},
+                                    {"type", "function"},
+                                    {"function", {
+                                        {"name", ""},
+                                        {"arguments", ""}
+                                    }}
+                                };
+                            }
+                            
+                            auto& tc = tool_calls_map[index];
+                            
+                            // Accumulate id
+                            if (tc_delta.contains("id")) {
+                                tc["id"] = tc_delta["id"].get<std::string>();
+                            }
+                            
+                            // Accumulate function details
+                            if (tc_delta.contains("function")) {
+                                auto& func_delta = tc_delta["function"];
+                                auto& func = tc["function"];
+                                
+                                if (func_delta.contains("name")) {
+                                    func["name"] = func["name"].get<std::string>() + 
+                                                   func_delta["name"].get<std::string>();
+                                }
+                                if (func_delta.contains("arguments")) {
+                                    func["arguments"] = func["arguments"].get<std::string>() + 
+                                                        func_delta["arguments"].get<std::string>();
+                                }
+                            }
+                        }
+                    }
                 }
                 
                 if (!c.finish_reason.empty()) {
@@ -372,7 +411,14 @@ public:
         }
         
         final_response.content = accumulated_content;
-        final_response.tool_calls = tool_calls;
+        
+        // Convert tool_calls_map to vector (sorted by index)
+        std::vector<nlohmann::json> tool_calls;
+        for (const auto& [index, tc] : tool_calls_map) {
+            tool_calls.push_back(tc);
+        }
+        final_response.tool_calls = std::move(tool_calls);
+        
         return final_response;
     }
     
@@ -380,6 +426,37 @@ public:
     
     std::pair<size_t, size_t> poolStats() const {
         return {pool_.available(), pool_.in_use()};
+    }
+    
+    // Embeddings
+    std::vector<float> embed(const std::string& text) {
+        nlohmann::json body;
+        body["model"] = "text-embedding-ada-002";
+        body["input"] = text;
+        
+        auto [response, http_code] = makeRequest("/embeddings", body);
+        
+        if (http_code != 200) {
+            spdlog::error("Embedding request failed: HTTP {}", http_code);
+            return {};
+        }
+        
+        try {
+            auto j = nlohmann::json::parse(response);
+            if (j.contains("data") && !j["data"].empty()) {
+                auto& embedding = j["data"][0]["embedding"];
+                std::vector<float> result;
+                result.reserve(embedding.size());
+                for (const auto& val : embedding) {
+                    result.push_back(val.get<float>());
+                }
+                return result;
+            }
+        } catch (const std::exception& e) {
+            spdlog::error("Failed to parse embedding response: {}", e.what());
+        }
+        
+        return {};
     }
     
 private:
@@ -458,9 +535,7 @@ std::pair<size_t, size_t> LLMClient::pool_stats() const {
 }
 
 std::vector<float> LLMClient::embed(const std::string& text) {
-    // TODO: Implement embeddings
-    (void)text;
-    return {};
+    return impl_->embed(text);
 }
 
 } // namespace agent
