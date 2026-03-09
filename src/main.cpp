@@ -142,7 +142,7 @@ void run_server(std::shared_ptr<agent::Agent> agent, std::shared_ptr<agent::Cron
         auto tasks = cron->list_tasks();
         nlohmann::json arr = nlohmann::json::array();
         for (const auto& t : tasks) arr.push_back(t.to_json());
-        res.set_content(nlohmann::json{{"tasks", arr}, {"count", tasks.size()}}.dump(), "application/json");
+        res.set_content(nlohmann::json{{"tasks", arr}, {"count", tasks.size()}, {"running", cron->is_running()}}.dump(), "application/json");
     });
     
     svr.Post("/api/cron", [cron](auto& req, auto& res) {
