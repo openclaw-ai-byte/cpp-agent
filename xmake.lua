@@ -37,7 +37,6 @@ target("cpp-agent")
     add_includedirs("include", {public = true})
     
     add_files("src/main.cpp")
-    add_files("src/api/*.cpp")
     
     -- System libraries
     if is_plat("linux") then
@@ -46,4 +45,22 @@ target("cpp-agent")
         add_syslinks("pthread", "dl")
     elseif is_plat("windows") then
         add_syslinks("ws2_32", "wsock32")
+    end
+
+-- Unit tests
+target("tests")
+    set_kind("binary")
+    set_default(false)
+    
+    add_deps("agent-core")
+    add_packages("boost", "nlohmann_json", "spdlog", "libcurl", "yaml-cpp")
+    add_includedirs("include", {public = true})
+    add_includedirs("tests", {public = true})
+    
+    add_files("tests/main.cpp")
+    
+    if is_plat("linux") then
+        add_syslinks("pthread", "dl")
+    elseif is_plat("macosx") then
+        add_syslinks("pthread", "dl")
     end
