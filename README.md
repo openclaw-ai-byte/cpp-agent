@@ -1,59 +1,31 @@
 # C++ AI Agent
 
-一个功能完整的 AI Agent 框架，支持对话、任务执行、工具调用和技能扩展。
+一个功能完整的 AI Agent 框架，支持对话、任务执行、工具调用、技能扩展和定时任务。
 
 ## 特性
 
-- 🤖 **对话能力**: 支持 OpenAI API 兼容接口的 LLM 对话
+- 🤖 **对话能力**: 支持 OpenAI API 兼容接口的 LLM 对话，支持流式响应
+- ⏰ **定时任务**: 内置 Cron 调度器，支持通过 API 添加/管理定时任务
+- 🔄 **重试机制**: 自动重试失败的请求，可配置重试次数和延迟
+- 🌐 **连接池**: CURL 连接复用，提升性能
 - 🛠️ **工具系统**: 内置文件读写、目录列表、命令执行、网络搜索等工具
 - 🎯 **技能扩展**: 可动态加载的技能系统，支持 YAML/JSON 配置
-- 🔌 **MCP 协议**: 支持 Model Context Protocol（规划中）
 - 🌐 **HTTP API**: RESTful API 接口
-- 🖥️ **Web UI**: 基于 TDesign 的现代 Web 界面
-- 📦 **C++23**: 使用最新 C++ 标准和模块化设计
+- 📦 **C++23**: 使用最新 C++ 标准和协程设计
 
 ## 构建
 
 ### 依赖
 
-- C++23 编译器 (GCC 13+, Clang 16+, MSVC 19.35+)
+- C++23 编译器 (Clang 16+)
 - xmake
-- libcurl
+- libcurl, boost, spdlog, nlohmann_json
 
 ### 编译
 
 ```bash
-# 安装依赖
 xmake config --mode=release
 xmake build
-
-# 运行 CLI 模式
-xmake run cpp-agent
-
-# 运行服务器模式
-xmake run cpp-agent --server --port 8080
-```
-
-## 配置
-
-编辑 `config.json`:
-
-```json
-{
-  "api_key": "your-api-key",
-  "api_base": "https://api.openai.com/v1",
-  "model": "gpt-4",
-  "system_prompt": "You are a helpful AI assistant.",
-  "max_tokens": 4096,
-  "temperature": 0.7
-}
-```
-
-或设置环境变量:
-
-```bash
-export OPENAI_API_KEY=your-api-key
-export OPENAI_API_BASE=https://api.openai.com/v1  # 可选
 ```
 
 ## 使用
@@ -66,7 +38,7 @@ export OPENAI_API_BASE=https://api.openai.com/v1  # 可选
 
 命令:
 - `tools` - 列出所有可用工具
-- `skills` - 列出所有可用技能
+- `cron` - 列出定时任务
 - `clear` - 清空对话历史
 - `exit` - 退出程序
 
@@ -76,79 +48,68 @@ export OPENAI_API_BASE=https://api.openai.com/v1  # 可选
 ./cpp-agent --server --port 8080
 ```
 
-API 端点:
+## API 端点
+
+### 对话
 - `POST /api/chat` - 发送消息
+- `GET /api/conversation` - 获取对话历史
+- `DELETE /api/conversation` - 清空对话
+
+### 工具
 - `GET /api/tools` - 列出工具
 - `POST /api/tools/{name}/execute` - 执行工具
-- `GET /api/skills` - 列出技能
-- `DELETE /api/conversation` - 清空对话
-- `GET /api/conversation` - 获取对话历史
-- `GET /api/health` - 健康检查
 
-### Web UI
+### Cron 定时任务
+- `GET /api/cron` - 列出所有定时任务
+- `POST /api/cron` - 添加定时任务
+- `GET /api/cron/{id}` - 获取任务详情
+- `DELETE /api/cron/{id}` - 删除任务
+- `POST /api/cron/{id}/toggle` - 启用/禁用任务
+- `POST /api/cron/start` - 启动调度器
+- `POST /api/cron/stop` - 停止调度器
 
-```bash
-# 构建 Web 前端
-cd web
-npm install
-npm run build
+### Cron 表达式格式
 
-# 启动服务器
-cd ..
-./cpp-agent --server
-
-# 访问 http://localhost:8080
+```
+minute hour day month weekday
+  *     *    *    *      *
+  
+例如:
+  "0 8 * * *"      - 每天 8:00
+  "30 9 * * 1-5"   - 工作日 9:30
+  "0 */2 * * *"    - 每 2 小时
 ```
 
-开发模式（前端热重载）:
-```bash
-# 终端 1: 启动后端
-./cpp-agent --server --port 8080
+### 添加定时任务示例
 
-# 终端 2: 启动前端开发服务器
-cd web
-npm run dev
-# 访问 http://localhost:3000 (自动代理到 8080)
+```bash
+curl -X POST http://localhost:8080/api/cron \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "每日报告",
+    "cron": "0 8 * * *",
+    "command": "生成今天的报告"
+  }'
 ```
 
-## 内置工具
+## 配置
 
-| 工具 | 描述 | 权限级别 |
-|------|------|----------|
-| `web_search` | 网络搜索 | read |
-| `file_read` | 读取文件 | read |
-| `file_write` | 写入文件 | write |
-| `list_directory` | 列出目录 | read |
-| `execute` | 执行命令 | execute |
-| `get_time` | 获取时间 | read |
+编辑 `config.json`:
 
-## 扩展
+```json
+{
+  "api_key": "your-api-key",
+  "api_base": "https://api.openai.com/v1",
+  "model": "gpt-4",
+  "max_tokens": 4096,
+  "temperature": 0.7
+}
+```
 
-### 添加自定义工具
+或设置环境变量:
 
-```cpp
-#include "tools/Tool.hpp"
-
-class MyTool : public agent::Tool {
-public:
-    std::string name() const override { return "my_tool"; }
-    std::string description() const override { return "My custom tool"; }
-    
-    ToolSchema schema() const override {
-        return ToolSchema{name(), description(),
-            {{"type", "object"}, {"properties", {
-                {"input", {{"type", "string"}, {"description", "Input value"}}}
-            }}}
-        };
-    }
-    
-    ToolResult execute(const nlohmann::json& args) override {
-        return ToolResult::ok("Result: " + args["input"].get<std::string>());
-    }
-};
-
-// 注册
-ToolRegistry::instance().add_tool(std::make_shared<MyTool>());
+```bash
+export OPENAI_API_KEY=your-api-key
 ```
 
 ## 许可证

@@ -9,7 +9,7 @@ add_rules("mode.debug", "mode.release")
 add_requires("nlohmann_json")
 add_requires("spdlog")
 add_requires("sqlite3")
-add_requires("boost", {configs = {filesystem = true, system = true, asio = true}})
+add_requires("boost", {configs = {filesystem = true, system = true, asio = true, context = true, fiber = true}})
 add_requires("libcurl")
 
 -- Core library (contains all agent functionality)
@@ -23,6 +23,7 @@ target("agent-core")
     add_files("src/tools/*.cpp")
     add_files("src/skills/*.cpp")
     add_files("src/mcp/*.cpp")
+    add_files("src/cron/*.cpp")
     
     add_cxxflags("-Wall", "-Wextra", "-Wpedantic")
 
