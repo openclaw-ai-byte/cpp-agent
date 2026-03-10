@@ -3,8 +3,11 @@
 #include <string>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <boost/asio.hpp>
 
 namespace agent {
+
+namespace asio = boost::asio;
 
 struct ToolSchema {
     std::string name;
@@ -48,7 +51,13 @@ public:
     virtual std::string name() const = 0;
     virtual std::string description() const = 0;
     virtual ToolSchema schema() const = 0;
+    
+    // Synchronous execution (blocking)
     virtual ToolResult execute(const nlohmann::json& arguments) = 0;
+    
+    // Asynchronous execution (C++20 coroutine)
+    // Default implementation wraps sync version in thread pool
+    virtual asio::awaitable<ToolResult> execute_async(const nlohmann::json& arguments);
     
     virtual std::string permission_level() const { return "read"; }
     virtual bool requires_confirmation() const { return false; }

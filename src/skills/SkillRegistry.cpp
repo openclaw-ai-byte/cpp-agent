@@ -303,4 +303,19 @@ std::vector<std::string> SkillRegistry::find_by_tag(const std::string& tag) cons
     return result;
 }
 
+// Default async implementation for Skill
+asio::awaitable<SkillResult> Skill::execute_async(
+    const std::string& action,
+    const nlohmann::json& params,
+    const SkillContext& context) {
+    auto executor = co_await asio::this_coro::executor;
+    co_return co_await asio::co_spawn(
+        executor,
+        [this, action, params, context]() -> asio::awaitable<SkillResult> {
+            co_return execute(action, params, context);
+        },
+        asio::use_awaitable
+    );
+}
+
 } // namespace agent

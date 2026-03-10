@@ -148,6 +148,10 @@ private:
         const std::vector<nlohmann::json>& tool_calls,
         std::vector<nlohmann::json>& messages
     );
+    asio::awaitable<std::string> process_tool_calls_async(
+        const std::vector<nlohmann::json>& tool_calls,
+        std::vector<nlohmann::json>& messages
+    );
     
     asio::io_context& io_;
     AgentConfig config_;

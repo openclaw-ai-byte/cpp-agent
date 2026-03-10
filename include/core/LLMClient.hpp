@@ -137,8 +137,11 @@ public:
     /// Get connection pool stats
     std::pair<size_t, size_t> pool_stats() const;
     
-    /// Embeddings (placeholder)
+    /// Embeddings
     std::vector<float> embed(const std::string& text);
+    
+    /// Async embeddings (C++20 coroutine)
+    asio::awaitable<std::vector<float>> embed_async(const std::string& text);
     
 private:
     class Impl;

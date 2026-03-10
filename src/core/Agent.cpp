@@ -115,7 +115,8 @@ asio::awaitable<std::string> Agent::chat(const std::string& user_input) {
         }
         messages.push_back(assistant_msg);
         
-        process_tool_calls(result.tool_calls, messages);
+        // Use async tool execution
+        co_await process_tool_calls_async(result.tool_calls, messages);
     }
     
     conversation_.push_back({Message::Role::Assistant, final_response, "", ""});
@@ -266,6 +267,40 @@ std::string Agent::process_tool_calls(
     }
     
     return results;
+}
+
+// Async version - processes tool calls without blocking
+asio::awaitable<std::string> Agent::process_tool_calls_async(
+    const std::vector<nlohmann::json>& tool_calls,
+    std::vector<nlohmann::json>& messages) {
+    std::string results;
+    
+    for (const auto& tc : tool_calls) {
+        std::string tool_name = tc["function"]["name"];
+        nlohmann::json args;
+        try {
+            args = nlohmann::json::parse(tc["function"]["arguments"].get<std::string>());
+        } catch (...) {
+            args = nlohmann::json::object();
+        }
+        std::string tool_id = tc["id"];
+        
+        spdlog::info("Executing tool async: {}", tool_name);
+        
+        // Use async tool execution
+        ToolResult result = co_await ToolRegistry::instance().execute_tool_async(tool_name, args);
+        std::string output = result.success ? result.output : "Error: " + result.output;
+        results += tool_name + ": " + output + "\n";
+        
+        messages.push_back({
+            {"role", "tool"},
+            {"tool_call_id", tool_id},
+            {"name", tool_name},
+            {"content", output}
+        });
+    }
+    
+    co_return results;
 }
 
 // ===== Tool/Skill management =====

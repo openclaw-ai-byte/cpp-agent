@@ -538,4 +538,15 @@ std::vector<float> LLMClient::embed(const std::string& text) {
     return impl_->embed(text);
 }
 
+asio::awaitable<std::vector<float>> LLMClient::embed_async(const std::string& text) {
+    auto executor = co_await asio::this_coro::executor;
+    co_return co_await asio::co_spawn(
+        executor,
+        [this, text]() -> asio::awaitable<std::vector<float>> {
+            co_return embed(text);
+        },
+        asio::use_awaitable
+    );
+}
+
 } // namespace agent

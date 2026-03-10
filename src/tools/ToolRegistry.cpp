@@ -1,7 +1,21 @@
 #include "tools/ToolRegistry.hpp"
 #include <spdlog/spdlog.h>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 namespace agent {
+
+// Default async implementation for Tool (wraps sync in thread pool)
+asio::awaitable<ToolResult> Tool::execute_async(const nlohmann::json& arguments) {
+    auto executor = co_await asio::this_coro::executor;
+    co_return co_await asio::co_spawn(
+        executor,
+        [this, arguments]() -> asio::awaitable<ToolResult> {
+            co_return execute(arguments);
+        },
+        asio::use_awaitable
+    );
+}
 
 ToolRegistry& ToolRegistry::instance() {
     static ToolRegistry registry;
@@ -69,6 +83,28 @@ ToolResult ToolRegistry::execute_tool(
     } catch (const std::exception& e) {
         spdlog::error("Tool '{}' failed: {}", name, e.what());
         return ToolResult::error(std::string("Exception: ") + e.what());
+    }
+}
+
+asio::awaitable<ToolResult> ToolRegistry::execute_tool_async(
+    const std::string& name,
+    const nlohmann::json& arguments
+) {
+    auto tool = get_tool(name);
+    if (!tool) {
+        spdlog::error("Tool not found: {}", name);
+        co_return ToolResult::error("Tool not found: " + name);
+    }
+    
+    spdlog::info("Executing tool '{}' async with args: {}", name, arguments.dump());
+    
+    try {
+        auto result = co_await tool->execute_async(arguments);
+        spdlog::info("Tool '{}' completed: success={}", name, result.success);
+        co_return result;
+    } catch (const std::exception& e) {
+        spdlog::error("Tool '{}' failed: {}", name, e.what());
+        co_return ToolResult::error(std::string("Exception: ") + e.what());
     }
 }
 

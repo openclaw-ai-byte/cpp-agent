@@ -29,8 +29,14 @@ public:
     std::vector<std::shared_ptr<Tool>> get_all_tools() const;
     std::vector<nlohmann::json> get_tool_schemas() const;
     
-    // Execution
+    // Synchronous execution
     ToolResult execute_tool(
+        const std::string& name,
+        const nlohmann::json& arguments
+    );
+    
+    // Asynchronous execution (C++20 coroutine)
+    asio::awaitable<ToolResult> execute_tool_async(
         const std::string& name,
         const nlohmann::json& arguments
     );
