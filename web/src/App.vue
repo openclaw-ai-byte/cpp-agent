@@ -4,7 +4,9 @@
       <t-header class="header">
         <div class="logo">🤖 AI Agent</div>
         <div class="actions">
-          <t-button theme="danger" variant="outline" @click="clearChat">清空对话</t-button>
+          <t-button theme="default" variant="outline" @click="exportSession" size="small">导出</t-button>
+          <t-button theme="primary" variant="outline" @click="showImportModal = true" size="small">导入</t-button>
+          <t-button theme="danger" variant="outline" @click="clearChat" size="small">清空</t-button>
         </div>
       </t-header>
       
@@ -12,6 +14,7 @@
         <t-aside width="200" class="sidebar">
           <t-menu :value="view" @change="v => view = v">
             <t-menu-item value="chat">💬 对话</t-menu-item>
+            <t-menu-item value="memory">🧠 记忆</t-menu-item>
             <t-menu-item value="tools">🔧 工具</t-menu-item>
             <t-menu-item value="cron">⏰ 定时任务</t-menu-item>
             <t-menu-item value="skills">🎯 技能</t-menu-item>
@@ -42,6 +45,84 @@
                 发送
               </t-button>
             </div>
+          </div>
+          
+          <!-- Memory View -->
+          <div v-else-if="view === 'memory'" class="panel memory-panel">
+            <div class="memory-header">
+              <h2>🧠 记忆管理</h2>
+              <div class="memory-stats">
+                <t-tag theme="primary" variant="light">{{ messages.length }} 条消息</t-tag>
+                <t-tag theme="success" variant="light">{{ sessions.length }} 个保存的会话</t-tag>
+              </div>
+            </div>
+            
+            <t-tabs v-model="memoryTab">
+              <t-tab-panel value="current" label="当前会话">
+                <div class="current-session">
+                  <div class="session-actions">
+                    <t-input v-model="sessionName" placeholder="会话名称" style="width: 200px" />
+                    <t-button theme="primary" @click="saveSession" :disabled="messages.length === 0">
+                      💾 保存会话
+                    </t-button>
+                  </div>
+                  
+                  <div class="message-list" v-if="messages.length > 0">
+                    <div v-for="(msg, idx) in messages" :key="msg.id" class="memory-item">
+                      <div class="memory-header-row">
+                        <span class="role-tag" :class="msg.role">{{ msg.role === 'user' ? '👤 用户' : '🤖 助手' }}</span>
+                        <span class="msg-index">#{{ idx + 1 }}</span>
+                      </div>
+                      <div class="memory-content" v-html="renderMd(msg.content)"></div>
+                    </div>
+                  </div>
+                  <t-empty v-else description="暂无对话记录" />
+                </div>
+              </t-tab-panel>
+              
+              <t-tab-panel value="saved" label="保存的会话">
+                <div class="saved-sessions">
+                  <div v-if="sessions.length > 0" class="session-list">
+                    <div v-for="session in sessions" :key="session.id" class="session-card">
+                      <div class="session-info">
+                        <h3>{{ session.name }}</h3>
+                        <div class="session-meta">
+                          <span>{{ session.messages.length }} 条消息</span>
+                          <span>{{ formatDate(session.savedAt) }}</span>
+                        </div>
+                      </div>
+                      <div class="session-actions">
+                        <t-button theme="primary" size="small" @click="loadSession(session)">
+                          📂 加载
+                        </t-button>
+                        <t-button theme="danger" size="small" variant="outline" @click="deleteSession(session.id)">
+                          🗑️ 删除
+                        </t-button>
+                      </div>
+                    </div>
+                  </div>
+                  <t-empty v-else description="暂无保存的会话" />
+                </div>
+              </t-tab-panel>
+              
+              <t-tab-panel value="settings" label="设置">
+                <div class="memory-settings">
+                  <t-form labelAlign="left">
+                    <t-form-item label="自动保存">
+                      <t-switch v-model="autoSave" @change="saveSettings" />
+                      <span class="setting-hint">对话时自动保存到本地</span>
+                    </t-form-item>
+                    <t-form-item label="最大保存数量">
+                      <t-input-number v-model="maxSavedSessions" :min="1" :max="50" @change="saveSettings" />
+                      <span class="setting-hint">最多保存的会话数量</span>
+                    </t-form-item>
+                    <t-form-item label="清除所有数据">
+                      <t-button theme="danger" @click="clearAllData">清除所有保存的会话</t-button>
+                    </t-form-item>
+                  </t-form>
+                </div>
+              </t-tab-panel>
+            </t-tabs>
           </div>
           
           <!-- Tools View -->
@@ -114,14 +195,28 @@
         </t-content>
       </t-layout>
     </t-layout>
+    
+    <!-- Import Modal -->
+    <t-dialog v-model:visible="showImportModal" header="导入会话" @confirm="importSession">
+      <t-upload
+        v-model="importFiles"
+        accept=".json"
+        :autoUpload="false"
+        theme="file"
+        tips="选择 JSON 格式的会话文件"
+      />
+    </t-dialog>
   </div>
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { marked } from 'marked'
 import axios from 'axios'
 import { MessagePlugin } from 'tdesign-vue-next'
+
+const STORAGE_KEY = 'ai-agent-sessions'
+const SETTINGS_KEY = 'ai-agent-settings'
 
 export default {
   setup() {
@@ -131,6 +226,15 @@ export default {
     const loading = ref(false)
     const tools = ref([])
     const msgBox = ref(null)
+    
+    // Memory state
+    const memoryTab = ref('current')
+    const sessions = ref([])
+    const sessionName = ref('')
+    const autoSave = ref(true)
+    const maxSavedSessions = ref(10)
+    const showImportModal = ref(false)
+    const importFiles = ref([])
     
     // Cron state
     const cronTasks = ref([])
@@ -149,6 +253,123 @@ export default {
       { colKey: 'op', title: '操作', width: 80 }
     ]
 
+    // ===== Memory Functions =====
+    const loadSettings = () => {
+      try {
+        const saved = localStorage.getItem(SETTINGS_KEY)
+        if (saved) {
+          const settings = JSON.parse(saved)
+          autoSave.value = settings.autoSave ?? true
+          maxSavedSessions.value = settings.maxSavedSessions ?? 10
+        }
+      } catch (e) {}
+    }
+    
+    const saveSettings = () => {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        autoSave: autoSave.value,
+        maxSavedSessions: maxSavedSessions.value
+      }))
+    }
+    
+    const loadSessions = () => {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY)
+        if (saved) sessions.value = JSON.parse(saved)
+      } catch (e) {
+        sessions.value = []
+      }
+    }
+    
+    const saveSessionsToStorage = () => {
+      // Keep only the latest N sessions
+      if (sessions.value.length > maxSavedSessions.value) {
+        sessions.value = sessions.value.slice(-maxSavedSessions.value)
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.value))
+    }
+    
+    const saveSession = () => {
+      if (messages.value.length === 0) return
+      const name = sessionName.value || `会话 ${new Date().toLocaleString('zh-CN')}`
+      const session = {
+        id: Date.now().toString(),
+        name,
+        messages: [...messages.value],
+        savedAt: new Date().toISOString()
+      }
+      sessions.value.push(session)
+      saveSessionsToStorage()
+      sessionName.value = ''
+      MessagePlugin.success('会话已保存')
+    }
+    
+    const loadSession = (session) => {
+      if (!confirm('加载会话将覆盖当前对话，确定继续？')) return
+      messages.value = [...session.messages]
+      view.value = 'chat'
+      scrollToBottom()
+      MessagePlugin.success('会话已加载')
+    }
+    
+    const deleteSession = (id) => {
+      if (!confirm('确定删除这个会话？')) return
+      sessions.value = sessions.value.filter(s => s.id !== id)
+      saveSessionsToStorage()
+      MessagePlugin.success('已删除')
+    }
+    
+    const exportSession = () => {
+      const data = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        messages: messages.value
+      }
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `ai-chat-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      MessagePlugin.success('已导出')
+    }
+    
+    const importSession = async () => {
+      if (importFiles.value.length === 0) {
+        MessagePlugin.warning('请选择文件')
+        return
+      }
+      try {
+        const file = importFiles.value[0].raw
+        const text = await file.text()
+        const data = JSON.parse(text)
+        if (data.messages && Array.isArray(data.messages)) {
+          messages.value = data.messages
+          view.value = 'chat'
+          scrollToBottom()
+          MessagePlugin.success('已导入')
+        } else {
+          throw new Error('无效的会话文件')
+        }
+      } catch (e) {
+        MessagePlugin.error('导入失败: ' + e.message)
+      }
+      importFiles.value = []
+    }
+    
+    const clearAllData = () => {
+      if (!confirm('确定清除所有保存的会话？此操作不可恢复！')) return
+      sessions.value = []
+      localStorage.removeItem(STORAGE_KEY)
+      MessagePlugin.success('已清除所有数据')
+    }
+    
+    const formatDate = (iso) => {
+      return new Date(iso).toLocaleString('zh-CN')
+    }
+
+    // ===== Chat Functions =====
     const send = async () => {
       if (!input.value.trim() || loading.value) return
       const content = input.value.trim()
@@ -167,6 +388,7 @@ export default {
     }
 
     const clearChat = async () => {
+      if (!confirm('确定清空当前对话？')) return
       await axios.delete('/api/conversation')
       messages.value = []
     }
@@ -174,7 +396,9 @@ export default {
     const renderMd = (text) => marked(text || '')
     
     const scrollToBottom = () => {
-      if (msgBox.value) msgBox.value.scrollTop = msgBox.value.scrollHeight
+      setTimeout(() => {
+        if (msgBox.value) msgBox.value.scrollTop = msgBox.value.scrollHeight
+      }, 50)
     }
 
     const loadTools = async () => {
@@ -184,23 +408,17 @@ export default {
       } catch (e) {}
     }
     
-    // Cron functions
+    // ===== Cron Functions =====
     const loadCronTasks = async () => {
       cronLoading.value = true
       try {
         const res = await axios.get('/api/cron')
         cronTasks.value = res.data.tasks || []
+        cronRunning.value = res.data.running || false
       } catch (e) {
         MessagePlugin.error('加载定时任务失败')
       }
       cronLoading.value = false
-    }
-    
-    const checkCronStatus = async () => {
-      try {
-        const res = await axios.get('/api/cron')
-        cronRunning.value = true // 如果能获取任务说明在运行
-      } catch (e) {}
     }
     
     const toggleCron = async () => {
@@ -245,6 +463,7 @@ export default {
     }
     
     const deleteTask = async (id) => {
+      if (!confirm('确定删除此任务？')) return
       try {
         await axios.delete(`/api/cron/${id}`)
         MessagePlugin.success('删除成功')
@@ -253,8 +472,29 @@ export default {
         MessagePlugin.error('删除失败')
       }
     }
+    
+    // Auto-save on message changes
+    watch(messages, () => {
+      if (autoSave.value && messages.value.length > 0) {
+        // Auto-save to a temporary session (not shown in list)
+        localStorage.setItem('ai-agent-current', JSON.stringify(messages.value))
+      }
+    }, { deep: true })
+    
+    // Load auto-saved messages on mount
+    const loadAutoSaved = () => {
+      try {
+        const saved = localStorage.getItem('ai-agent-current')
+        if (saved) {
+          messages.value = JSON.parse(saved)
+        }
+      } catch (e) {}
+    }
 
     onMounted(() => {
+      loadSettings()
+      loadSessions()
+      loadAutoSaved()
       loadTools()
       loadCronTasks()
     })
@@ -262,6 +502,12 @@ export default {
     return { 
       view, messages, input, loading, tools, msgBox, 
       send, clearChat, renderMd,
+      // Memory
+      memoryTab, sessions, sessionName, autoSave, maxSavedSessions,
+      showImportModal, importFiles,
+      saveSession, loadSession, deleteSession, exportSession, importSession,
+      saveSettings, clearAllData, formatDate,
+      // Cron
       cronTasks, cronRunning, cronLoading, showAddModal, newTask, cronColumns,
       loadCronTasks, toggleCron, addTask, toggleTask, deleteTask
     }
@@ -283,6 +529,7 @@ body { font-family: -apple-system, sans-serif; }
   border-bottom: 1px solid #eee;
 }
 .logo { font-size: 18px; font-weight: 600; }
+.actions { display: flex; gap: 8px; }
 .sidebar { background: #fff; border-right: 1px solid #eee; }
 .content { background: #f5f5f5; padding: 24px; }
 
@@ -308,6 +555,69 @@ body { font-family: -apple-system, sans-serif; }
 
 .panel { background: #fff; border-radius: 8px; padding: 24px; }
 
+/* Memory Panel */
+.memory-panel { min-height: calc(100vh - 120px); }
+.memory-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.memory-header h2 { margin: 0; }
+.memory-stats { display: flex; gap: 8px; }
+
+.current-session { padding: 16px 0; }
+.session-actions { display: flex; gap: 12px; margin-bottom: 16px; }
+.message-list { max-height: 500px; overflow-y: auto; }
+.memory-item {
+  padding: 12px;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.memory-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.role-tag {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #f5f5f5;
+}
+.role-tag.user { background: #e3f2ff; color: #0052d9; }
+.role-tag.assistant { background: #e8f5e9; color: #2e7d32; }
+.msg-index { font-size: 12px; color: #999; }
+.memory-content {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333;
+}
+.memory-content pre { background: #f5f5f5; padding: 8px; border-radius: 4px; overflow-x: auto; }
+.memory-content code { background: #f5f5f5; padding: 2px 4px; border-radius: 2px; }
+
+.saved-sessions { padding: 16px 0; }
+.session-list { display: flex; flex-direction: column; gap: 12px; }
+.session-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+.session-card:hover { border-color: #0052d9; box-shadow: 0 2px 8px rgba(0,82,217,0.1); }
+.session-info h3 { margin: 0 0 8px 0; font-size: 16px; }
+.session-meta { display: flex; gap: 16px; font-size: 12px; color: #999; }
+.session-card .session-actions { display: flex; gap: 8px; margin: 0; }
+
+.memory-settings { padding: 16px 0; }
+.setting-hint { margin-left: 12px; font-size: 12px; color: #999; }
+
+/* Cron */
 .cron-header {
   display: flex;
   justify-content: space-between;
