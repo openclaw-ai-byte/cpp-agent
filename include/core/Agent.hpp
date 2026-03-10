@@ -113,6 +113,9 @@ public:
     void set_system_prompt(const std::string& prompt);
     std::vector<Message> get_conversation_history() const;
     
+    // Load conversation from messages array
+    void load_conversation(const std::vector<Message>& messages);
+    
     // ===== Accessors =====
     
     asio::io_context& get_io_context() { return io_; }

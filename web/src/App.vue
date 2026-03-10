@@ -87,7 +87,7 @@
                       <div class="session-info">
                         <h3>{{ session.name }}</h3>
                         <div class="session-meta">
-                          <span>{{ session.messages.length }} 条消息</span>
+                          <span>{{ session.messageCount || session.messages?.length || 0 }} 条消息</span>
                           <span>{{ formatDate(session.savedAt) }}</span>
                         </div>
                       </div>
@@ -210,12 +210,11 @@
 </template>
 
 <script>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { marked } from 'marked'
 import axios from 'axios'
 import { MessagePlugin } from 'tdesign-vue-next'
 
-const STORAGE_KEY = 'ai-agent-sessions'
 const SETTINGS_KEY = 'ai-agent-settings'
 
 export default {
@@ -253,7 +252,7 @@ export default {
       { colKey: 'op', title: '操作', width: 80 }
     ]
 
-    // ===== Memory Functions =====
+    // ===== Memory Functions (Backend API) =====
     const loadSettings = () => {
       try {
         const saved = localStorage.getItem(SETTINGS_KEY)
@@ -272,51 +271,64 @@ export default {
       }))
     }
     
-    const loadSessions = () => {
+    const loadSessions = async () => {
       try {
-        const saved = localStorage.getItem(STORAGE_KEY)
-        if (saved) sessions.value = JSON.parse(saved)
+        const res = await axios.get('/api/sessions')
+        sessions.value = (res.data.sessions || []).map(s => ({
+          id: s.id,
+          name: s.name,
+          messages: [],  // Not loaded in list
+          messageCount: s.message_count,
+          savedAt: s.updated_at || s.created_at
+        }))
       } catch (e) {
+        console.error('Failed to load sessions:', e)
         sessions.value = []
       }
     }
     
-    const saveSessionsToStorage = () => {
-      // Keep only the latest N sessions
-      if (sessions.value.length > maxSavedSessions.value) {
-        sessions.value = sessions.value.slice(-maxSavedSessions.value)
-      }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.value))
-    }
-    
-    const saveSession = () => {
+    const saveSession = async () => {
       if (messages.value.length === 0) return
       const name = sessionName.value || `会话 ${new Date().toLocaleString('zh-CN')}`
-      const session = {
-        id: Date.now().toString(),
-        name,
-        messages: [...messages.value],
-        savedAt: new Date().toISOString()
+      try {
+        const res = await axios.post('/api/sessions', { name })
+        MessagePlugin.success('会话已保存: ' + res.data.id)
+        sessionName.value = ''
+        loadSessions()  // Refresh list
+      } catch (e) {
+        MessagePlugin.error('保存失败: ' + (e.response?.data?.error || e.message))
       }
-      sessions.value.push(session)
-      saveSessionsToStorage()
-      sessionName.value = ''
-      MessagePlugin.success('会话已保存')
     }
     
-    const loadSession = (session) => {
+    const loadSession = async (session) => {
       if (!confirm('加载会话将覆盖当前对话，确定继续？')) return
-      messages.value = [...session.messages]
-      view.value = 'chat'
-      scrollToBottom()
-      MessagePlugin.success('会话已加载')
+      try {
+        // Load session into backend agent
+        await axios.post(`/api/sessions/${session.id}/load`)
+        // Fetch updated conversation
+        const res = await axios.get('/api/conversation')
+        messages.value = (res.data.messages || []).map(m => ({
+          id: Date.now() + Math.random(),
+          role: m.role,
+          content: m.content
+        }))
+        view.value = 'chat'
+        scrollToBottom()
+        MessagePlugin.success('会话已加载')
+      } catch (e) {
+        MessagePlugin.error('加载失败: ' + (e.response?.data?.error || e.message))
+      }
     }
     
-    const deleteSession = (id) => {
+    const deleteSession = async (id) => {
       if (!confirm('确定删除这个会话？')) return
-      sessions.value = sessions.value.filter(s => s.id !== id)
-      saveSessionsToStorage()
-      MessagePlugin.success('已删除')
+      try {
+        await axios.delete(`/api/sessions/${id}`)
+        MessagePlugin.success('已删除')
+        loadSessions()
+      } catch (e) {
+        MessagePlugin.error('删除失败')
+      }
     }
     
     const exportSession = () => {
@@ -345,10 +357,13 @@ export default {
         const text = await file.text()
         const data = JSON.parse(text)
         if (data.messages && Array.isArray(data.messages)) {
-          messages.value = data.messages
-          view.value = 'chat'
-          scrollToBottom()
-          MessagePlugin.success('已导入')
+          // Import by saving to backend
+          await axios.post('/api/sessions', { 
+            name: `导入 ${new Date().toLocaleString('zh-CN')}`,
+            messages: data.messages 
+          })
+          MessagePlugin.success('已导入并保存')
+          loadSessions()
         } else {
           throw new Error('无效的会话文件')
         }
@@ -358,11 +373,18 @@ export default {
       importFiles.value = []
     }
     
-    const clearAllData = () => {
+    const clearAllData = async () => {
       if (!confirm('确定清除所有保存的会话？此操作不可恢复！')) return
-      sessions.value = []
-      localStorage.removeItem(STORAGE_KEY)
-      MessagePlugin.success('已清除所有数据')
+      try {
+        // Delete all sessions from backend
+        for (const s of sessions.value) {
+          await axios.delete(`/api/sessions/${s.id}`)
+        }
+        sessions.value = []
+        MessagePlugin.success('已清除所有数据')
+      } catch (e) {
+        MessagePlugin.error('清除失败')
+      }
     }
     
     const formatDate = (iso) => {
@@ -473,28 +495,24 @@ export default {
       }
     }
     
-    // Auto-save on message changes
-    watch(messages, () => {
-      if (autoSave.value && messages.value.length > 0) {
-        // Auto-save to a temporary session (not shown in list)
-        localStorage.setItem('ai-agent-current', JSON.stringify(messages.value))
-      }
-    }, { deep: true })
-    
-    // Load auto-saved messages on mount
-    const loadAutoSaved = () => {
+    // Load current conversation from backend
+    const loadCurrentConversation = async () => {
       try {
-        const saved = localStorage.getItem('ai-agent-current')
-        if (saved) {
-          messages.value = JSON.parse(saved)
-        }
-      } catch (e) {}
+        const res = await axios.get('/api/conversation')
+        messages.value = (res.data.messages || []).map(m => ({
+          id: Date.now() + Math.random(),
+          role: m.role,
+          content: m.content
+        }))
+      } catch (e) {
+        console.error('Failed to load conversation:', e)
+      }
     }
 
     onMounted(() => {
       loadSettings()
       loadSessions()
-      loadAutoSaved()
+      loadCurrentConversation()
       loadTools()
       loadCronTasks()
     })

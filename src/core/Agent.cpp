@@ -311,4 +311,9 @@ std::vector<Message> Agent::get_conversation_history() const {
     return conversation_;
 }
 
+void Agent::load_conversation(const std::vector<Message>& messages) {
+    conversation_ = messages;
+    spdlog::info("Loaded {} messages into conversation", messages.size());
+}
+
 } // namespace agent

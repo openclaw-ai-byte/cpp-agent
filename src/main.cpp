@@ -1,4 +1,5 @@
 #include "core/Agent.hpp"
+#include "core/SessionManager.hpp"
 #include "cron/CronManager.hpp"
 #include "tools/ToolRegistry.hpp"
 #include "skills/SkillRegistry.hpp"
@@ -206,6 +207,86 @@ void run_server(std::shared_ptr<agent::Agent> agent, std::shared_ptr<agent::Cron
     // ===== Health =====
     svr.Get("/api/health", [](auto&, auto& res) { 
         res.set_content(R"({"status":"ok"})", "application/json"); 
+    });
+    
+    // ===== Session API =====
+    auto sessions = std::make_shared<agent::SessionManager>("data/sessions");
+    
+    svr.Get("/api/sessions", [sessions](auto&, auto& res) {
+        auto list = sessions->list_sessions();
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& s : list) arr.push_back(s.to_json());
+        res.set_content(nlohmann::json{{"sessions", arr}, {"count", list.size()}}.dump(), "application/json");
+    });
+    
+    svr.Get("/api/sessions/([^/]+)", [sessions](auto& req, auto& res) {
+        auto session = sessions->get_session(req.matches[1]);
+        if (!session) {
+            res.status = 404;
+            res.set_content(R"({"error":"session not found"})","application/json");
+            return;
+        }
+        res.set_content(session->to_json().dump(), "application/json");
+    });
+    
+    svr.Post("/api/sessions", [agent, sessions](auto& req, auto& res) {
+        try {
+            auto body = nlohmann::json::parse(req.body);
+            std::string name = body.value("name", "");
+            
+            // Get current conversation
+            nlohmann::json msgs = nlohmann::json::array();
+            for (const auto& m : agent->get_conversation_history()) {
+                msgs.push_back(m.to_json());
+            }
+            
+            std::string id = sessions->save_session(name, agent->get_config().system_prompt, msgs);
+            if (id.empty()) {
+                res.status = 500;
+                res.set_content(R"({"error":"failed to save session"})","application/json");
+                return;
+            }
+            
+            res.set_content(nlohmann::json{{"success", true}, {"id", id}}.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500; res.set_content(nlohmann::json{{"error", e.what()}}.dump(), "application/json");
+        }
+    });
+    
+    svr.Post("/api/sessions/([^/]+)/load", [agent, sessions](auto& req, auto& res) {
+        try {
+            auto session = sessions->get_session(req.matches[1]);
+            if (!session) {
+                res.status = 404;
+                res.set_content(R"({"error":"session not found"})","application/json");
+                return;
+            }
+            
+            // Load messages into agent
+            std::vector<agent::Message> msgs;
+            if (session->messages.is_array()) {
+                for (const auto& m : session->messages) {
+                    msgs.push_back(agent::Message::from_json(m));
+                }
+            }
+            agent->load_conversation(msgs);
+            if (!session->system_prompt.empty()) {
+                agent->set_system_prompt(session->system_prompt);
+            }
+            
+            res.set_content(nlohmann::json{
+                {"success", true}, 
+                {"message_count", msgs.size()},
+                {"name", session->meta.name}
+            }.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500; res.set_content(nlohmann::json{{"error", e.what()}}.dump(), "application/json");
+        }
+    });
+    
+    svr.Delete("/api/sessions/([^/]+)", [sessions](auto& req, auto& res) {
+        bool removed = sessions->delete_session(req.matches[1]);
+        res.set_content(nlohmann::json{{"success", removed}}.dump(), "application/json");
     });
     
     svr.set_mount_point("/", "./web/dist");
