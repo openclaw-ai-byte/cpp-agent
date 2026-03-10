@@ -13,7 +13,10 @@
 
 namespace asio = boost::asio;
 
-namespace agent { void register_builtin_tools(); }
+namespace agent { 
+    void register_builtin_tools(); 
+    void set_cron_manager(class CronManager* mgr);
+}
 
 void print_banner() {
     std::cout << R"(
@@ -341,6 +344,9 @@ int main(int argc, char* argv[]) {
     asio::io_context io;
     auto agent = std::make_shared<agent::Agent>(io, cfg);
     auto cron = std::make_shared<agent::CronManager>(cron_file);
+    
+    // Enable cron tools
+    agent::set_cron_manager(cron.get());
     
     // Set cron callback to execute commands via agent
     cron->set_callback([&agent](const agent::CronTask& task) {

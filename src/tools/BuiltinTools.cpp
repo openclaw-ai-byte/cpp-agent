@@ -1,5 +1,6 @@
 #include "tools/Tool.hpp"
 #include "tools/ToolRegistry.hpp"
+#include "cron/CronManager.hpp"
 #include <boost/filesystem.hpp>
 #include <fstream>
 #include <chrono>
@@ -468,6 +469,179 @@ public:
     }
 };
 
+// Cron Tools - need CronManager pointer
+static CronManager* g_cron_manager = nullptr;
+
+// Set cron manager for tool access
+void set_cron_manager(CronManager* mgr) { 
+    g_cron_manager = mgr; 
+}
+
+// List Cron Tasks Tool
+class CronListTool : public Tool {
+public:
+    std::string name() const override { return "cron_list"; }
+    
+    std::string description() const override {
+        return "List all scheduled cron tasks.";
+    }
+    
+    ToolSchema schema() const override {
+        nlohmann::json params;
+        params["type"] = "object";
+        params["properties"] = nlohmann::json::object();
+        return ToolSchema{name(), description(), params};
+    }
+    
+    ToolResult execute(const nlohmann::json& args) override {
+        if (!g_cron_manager) {
+            return ToolResult::error("Cron manager not available");
+        }
+        
+        auto tasks = g_cron_manager->list_tasks();
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& t : tasks) {
+            arr.push_back(t.to_json());
+        }
+        
+        return ToolResult::ok(nlohmann::json{
+            {"tasks", arr},
+            {"count", tasks.size()}
+        });
+    }
+};
+
+// Add Cron Task Tool
+class CronAddTool : public Tool {
+public:
+    std::string name() const override { return "cron_add"; }
+    
+    std::string description() const override {
+        return "Add a new cron task. Cron format: minute hour day month weekday. "
+               "Example: '0 8 * * *' means every day at 8:00 AM.";
+    }
+    
+    ToolSchema schema() const override {
+        nlohmann::json params;
+        params["type"] = "object";
+        params["properties"]["name"]["type"] = "string";
+        params["properties"]["name"]["description"] = "Task name";
+        params["properties"]["cron"]["type"] = "string";
+        params["properties"]["cron"]["description"] = "Cron expression (minute hour day month weekday)";
+        params["properties"]["command"]["type"] = "string";
+        params["properties"]["command"]["description"] = "Command or message to execute";
+        params["required"] = {"name", "cron", "command"};
+        return ToolSchema{name(), description(), params};
+    }
+    
+    ToolResult execute(const nlohmann::json& args) override {
+        if (!g_cron_manager) {
+            return ToolResult::error("Cron manager not available");
+        }
+        
+        std::string name = args["name"];
+        std::string cron = args["cron"];
+        std::string command = args["command"];
+        
+        try {
+            std::string id = g_cron_manager->add_task(name, cron, command);
+            return ToolResult::ok(nlohmann::json{
+                {"success", true},
+                {"id", id},
+                {"message", "Cron task added: " + name + " (" + cron + ")"}
+            });
+        } catch (const std::exception& e) {
+            return ToolResult::error(std::string("Failed to add cron task: ") + e.what());
+        }
+    }
+    
+    std::string permission_level() const override { return "write"; }
+    bool requires_confirmation() const override { return true; }
+};
+
+// Remove Cron Task Tool
+class CronRemoveTool : public Tool {
+public:
+    std::string name() const override { return "cron_remove"; }
+    
+    std::string description() const override {
+        return "Remove a cron task by its ID.";
+    }
+    
+    ToolSchema schema() const override {
+        nlohmann::json params;
+        params["type"] = "object";
+        params["properties"]["id"]["type"] = "string";
+        params["properties"]["id"]["description"] = "The task ID to remove";
+        params["required"] = {"id"};
+        return ToolSchema{name(), description(), params};
+    }
+    
+    ToolResult execute(const nlohmann::json& args) override {
+        if (!g_cron_manager) {
+            return ToolResult::error("Cron manager not available");
+        }
+        
+        std::string id = args["id"];
+        bool removed = g_cron_manager->remove_task(id);
+        
+        if (removed) {
+            return ToolResult::ok(nlohmann::json{
+                {"success", true},
+                {"message", "Cron task removed: " + id}
+            });
+        } else {
+            return ToolResult::error("Task not found: " + id);
+        }
+    }
+    
+    std::string permission_level() const override { return "write"; }
+    bool requires_confirmation() const override { return true; }
+};
+
+// Toggle Cron Task Tool
+class CronToggleTool : public Tool {
+public:
+    std::string name() const override { return "cron_toggle"; }
+    
+    std::string description() const override {
+        return "Enable or disable a cron task.";
+    }
+    
+    ToolSchema schema() const override {
+        nlohmann::json params;
+        params["type"] = "object";
+        params["properties"]["id"]["type"] = "string";
+        params["properties"]["id"]["description"] = "The task ID";
+        params["properties"]["enabled"]["type"] = "boolean";
+        params["properties"]["enabled"]["description"] = "Enable (true) or disable (false) the task";
+        params["required"] = {"id", "enabled"};
+        return ToolSchema{name(), description(), params};
+    }
+    
+    ToolResult execute(const nlohmann::json& args) override {
+        if (!g_cron_manager) {
+            return ToolResult::error("Cron manager not available");
+        }
+        
+        std::string id = args["id"];
+        bool enabled = args["enabled"];
+        
+        bool toggled = g_cron_manager->toggle_task(id, enabled);
+        
+        if (toggled) {
+            return ToolResult::ok(nlohmann::json{
+                {"success", true},
+                {"message", std::string("Task ") + id + (enabled ? " enabled" : " disabled")}
+            });
+        } else {
+            return ToolResult::error("Task not found: " + id);
+        }
+    }
+    
+    std::string permission_level() const override { return "write"; }
+};
+
 // Register all built-in tools
 void register_builtin_tools() {
     ToolRegistry::instance().register_tool<WebSearchTool>();
@@ -476,6 +650,11 @@ void register_builtin_tools() {
     ToolRegistry::instance().register_tool<ListDirectoryTool>();
     ToolRegistry::instance().register_tool<ExecuteTool>();
     ToolRegistry::instance().register_tool<TimeTool>();
+    // Cron tools
+    ToolRegistry::instance().register_tool<CronListTool>();
+    ToolRegistry::instance().register_tool<CronAddTool>();
+    ToolRegistry::instance().register_tool<CronRemoveTool>();
+    ToolRegistry::instance().register_tool<CronToggleTool>();
 }
 
 } // namespace agent
