@@ -292,6 +292,131 @@ void run_server(std::shared_ptr<agent::Agent> agent, std::shared_ptr<agent::Cron
         res.set_content(nlohmann::json{{"success", removed}}.dump(), "application/json");
     });
     
+    // ===== MCP API =====
+    svr.Post("/api/mcp/connect", [agent](auto& req, auto& res) {
+        try {
+            auto body = nlohmann::json::parse(req.body);
+            std::string endpoint = body.value("endpoint", "");
+            std::string transport = body.value("transport", "stdio");
+            
+            if (endpoint.empty()) {
+                res.status = 400;
+                res.set_content(R"({"error":"endpoint required"})","application/json");
+                return;
+            }
+            
+            if (agent->connect_mcp_server(endpoint, transport)) {
+                auto clients = agent->get_mcp_clients();
+                auto& last = clients.back();
+                auto info = last->get_server_info();
+                res.set_content(nlohmann::json{
+                    {"success", true},
+                    {"server", {
+                        {"name", info.name},
+                        {"version", info.version},
+                        {"capabilities", info.capabilities}
+                    }}
+                }.dump(), "application/json");
+            } else {
+                res.status = 500;
+                res.set_content(R"({"error":"failed to connect to MCP server"})","application/json");
+            }
+        } catch (const std::exception& e) {
+            res.status = 500; res.set_content(nlohmann::json{{"error", e.what()}}.dump(), "application/json");
+        }
+    });
+    
+    svr.Get("/api/mcp/servers", [agent](auto&, auto& res) {
+        auto clients = agent->get_mcp_clients();
+        nlohmann::json arr = nlohmann::json::array();
+        for (auto& client : clients) {
+            auto info = client->get_server_info();
+            arr.push_back({
+                {"name", info.name},
+                {"version", info.version},
+                {"connected", client->is_connected()},
+                {"capabilities", info.capabilities}
+            });
+        }
+        res.set_content(nlohmann::json{{"servers", arr}, {"count", arr.size()}}.dump(), "application/json");
+    });
+    
+    svr.Get("/api/mcp/tools", [agent](auto&, auto& res) {
+        auto tools = agent->list_mcp_tools();
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& t : tools) {
+            arr.push_back({
+                {"name", t.name},
+                {"description", t.description},
+                {"inputSchema", t.input_schema}
+            });
+        }
+        res.set_content(nlohmann::json{{"tools", arr}, {"count", arr.size()}}.dump(), "application/json");
+    });
+    
+    svr.Post("/api/mcp/tools/([^/]+)/call", [agent](auto& req, auto& res) {
+        try {
+            auto body = nlohmann::json::parse(req.body);
+            std::string server_name = body.value("server", "");
+            std::string tool_name = req.matches[1];
+            nlohmann::json args = body.value("arguments", nlohmann::json::object());
+            
+            auto result = agent->call_mcp_tool(server_name, tool_name, args);
+            
+            nlohmann::json content_arr = nlohmann::json::array();
+            for (const auto& c : result.content) {
+                content_arr.push_back({
+                    {"type", c.type},
+                    {"text", c.text},
+                    {"data", c.data},
+                    {"mimeType", c.mime_type},
+                    {"uri", c.uri}
+                });
+            }
+            
+            res.set_content(nlohmann::json{
+                {"isError", result.is_error},
+                {"content", content_arr},
+                {"errorMessage", result.error_message}
+            }.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500; res.set_content(nlohmann::json{{"error", e.what()}}.dump(), "application/json");
+        }
+    });
+    
+    svr.Get("/api/mcp/prompts", [agent](auto&, auto& res) {
+        auto clients = agent->get_mcp_clients();
+        nlohmann::json arr = nlohmann::json::array();
+        for (auto& client : clients) {
+            auto prompts = client->list_prompts();
+            for (const auto& p : prompts) {
+                arr.push_back({
+                    {"name", p.name},
+                    {"description", p.description},
+                    {"arguments", p.arguments}
+                });
+            }
+        }
+        res.set_content(nlohmann::json{{"prompts", arr}, {"count", arr.size()}}.dump(), "application/json");
+    });
+    
+    svr.Get("/api/mcp/resources", [agent](auto&, auto& res) {
+        auto clients = agent->get_mcp_clients();
+        nlohmann::json arr = nlohmann::json::array();
+        for (auto& client : clients) {
+            auto resources = client->list_resources();
+            for (const auto& r : resources) {
+                arr.push_back({
+                    {"uri", r.uri},
+                    {"name", r.name},
+                    {"description", r.description},
+                    {"mimeType", r.mime_type}
+                });
+            }
+        }
+        res.set_content(nlohmann::json{{"resources", arr}, {"count", arr.size()}}.dump(), "application/json");
+    });
+    
     svr.set_mount_point("/", "./web/dist");
     
     spdlog::info("Server on port {}", port);

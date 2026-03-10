@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 #include <boost/asio.hpp>
 #include "LLMClient.hpp"  // For StreamChunk
+#include "mcp/MCPClient.hpp"
 
 namespace agent {
 
@@ -105,7 +106,17 @@ public:
     
     // ===== MCP support =====
     
-    void connect_mcp_server(const std::string& endpoint);
+    /// Connect to an MCP server (transport: "stdio" or "http")
+    bool connect_mcp_server(const std::string& endpoint, const std::string& transport = "stdio");
+    
+    /// Get connected MCP clients
+    std::vector<std::shared_ptr<mcp::MCPClient>> get_mcp_clients() const;
+    
+    /// List all tools from MCP servers
+    std::vector<mcp::MCPTool> list_mcp_tools();
+    
+    /// Call an MCP tool
+    mcp::MCPToolResult call_mcp_tool(const std::string& server_name, const std::string& tool_name, const nlohmann::json& arguments);
     
     // ===== Conversation management =====
     
@@ -133,6 +144,9 @@ private:
     AgentConfig config_;
     std::unique_ptr<LLMClient> llm_client_;
     std::vector<Message> conversation_;
+    
+    // MCP clients
+    std::vector<std::shared_ptr<mcp::MCPClient>> mcp_clients_;
 };
 
 } // namespace agent

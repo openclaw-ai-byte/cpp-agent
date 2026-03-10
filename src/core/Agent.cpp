@@ -1,6 +1,7 @@
 #include "core/Agent.hpp"
 #include "core/LLMClient.hpp"
 #include "tools/ToolRegistry.hpp"
+#include "tools/MCPTool.hpp"
 #include "skills/SkillRegistry.hpp"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -314,6 +315,57 @@ std::vector<Message> Agent::get_conversation_history() const {
 void Agent::load_conversation(const std::vector<Message>& messages) {
     conversation_ = messages;
     spdlog::info("Loaded {} messages into conversation", messages.size());
+}
+
+// ===== MCP support =====
+
+bool Agent::connect_mcp_server(const std::string& endpoint, const std::string& transport) {
+    auto client = mcp::MCPClientFactory::create(transport);
+    if (!client) {
+        spdlog::error("Failed to create MCP client for transport: {}", transport);
+        return false;
+    }
+    
+    if (!client->connect(endpoint)) {
+        spdlog::error("Failed to connect to MCP server: {}", endpoint);
+        return false;
+    }
+    
+    auto shared_client = std::shared_ptr<mcp::MCPClient>(client.release());
+    mcp_clients_.push_back(shared_client);
+    
+    // Register MCP tools with ToolRegistry
+    auto tools = mcp_clients_.back()->list_tools();
+    for (const auto& tool : tools) {
+        spdlog::info("MCP tool discovered: {}", tool.name);
+        ToolRegistry::instance().add_tool(std::make_shared<MCPTool>(shared_client, tool));
+    }
+    
+    spdlog::info("Connected to MCP server with {} tools", tools.size());
+    return true;
+}
+
+std::vector<std::shared_ptr<mcp::MCPClient>> Agent::get_mcp_clients() const {
+    return mcp_clients_;
+}
+
+std::vector<mcp::MCPTool> Agent::list_mcp_tools() {
+    std::vector<mcp::MCPTool> all_tools;
+    for (auto& client : mcp_clients_) {
+        auto tools = client->list_tools();
+        all_tools.insert(all_tools.end(), tools.begin(), tools.end());
+    }
+    return all_tools;
+}
+
+mcp::MCPToolResult Agent::call_mcp_tool(const std::string& server_name, const std::string& tool_name, const nlohmann::json& arguments) {
+    for (auto& client : mcp_clients_) {
+        auto info = client->get_server_info();
+        if (info.name == server_name || server_name.empty()) {
+            return client->call_tool(tool_name, arguments);
+        }
+    }
+    return mcp::MCPToolResult{.is_error = true, .error_message = "MCP server not found: " + server_name};
 }
 
 } // namespace agent
