@@ -8,6 +8,7 @@
 #include <mutex>
 #include <atomic>
 #include <sstream>
+#include <curl/curl.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -561,14 +562,56 @@ private:
 // ============================================================================
 class HTTPMCPClient : public MCPClient {
 public:
-    HTTPMCPClient() = default;
+    HTTPMCPClient() {
+        // Initialize curl once
+        static bool curl_initialized = false;
+        if (!curl_initialized) {
+            curl_global_init(CURL_GLOBAL_DEFAULT);
+            curl_initialized = true;
+        }
+    }
+    
     ~HTTPMCPClient() override { disconnect(); }
     
     bool connect(const std::string& endpoint) override {
         endpoint_ = endpoint;
+        
+        // Remove trailing slash
+        while (!endpoint_.empty() && endpoint_.back() == '/') {
+            endpoint_.pop_back();
+        }
+        
+        // Initialize MCP connection
+        nlohmann::json init_params = {
+            {"protocolVersion", "2024-11-05"},
+            {"capabilities", {
+                {"tools", true},
+                {"prompts", true},
+                {"resources", true}
+            }},
+            {"clientInfo", {
+                {"name", "cpp-agent"},
+                {"version", "0.1.0"}
+            }}
+        };
+        
+        nlohmann::json result;
+        std::string error;
+        if (!send_jsonrpc("initialize", init_params, result, error)) {
+            spdlog::error("MCP HTTP: Initialize failed: {}", error);
+            return false;
+        }
+        
+        // Parse server info
+        server_info_.name = result.value("serverInfo", nlohmann::json::object()).value("name", "unknown");
+        server_info_.version = result.value("serverInfo", nlohmann::json::object()).value("version", "0.0.0");
+        server_info_.capabilities = result.value("capabilities", nlohmann::json::object());
+        
+        // Send initialized notification
+        send_notification("notifications/initialized");
+        
         connected_ = true;
-        spdlog::info("MCP: HTTP client connected to {}", endpoint);
-        // TODO: Implement HTTP MCP handshake
+        spdlog::info("MCP HTTP: Connected to {} v{}", server_info_.name, server_info_.version);
         return true;
     }
     
@@ -579,10 +622,30 @@ public:
     bool is_connected() const override { return connected_; }
     MCPServerInfo get_server_info() const override { return server_info_; }
     
+    // ========== Tools API ==========
+    
     std::vector<MCPTool> list_tools() override {
-        // TODO: Implement HTTP transport
-        spdlog::warn("MCP: HTTP transport not yet implemented");
-        return {};
+        std::vector<MCPTool> tools;
+        if (!connected_) return tools;
+        
+        nlohmann::json result;
+        std::string error;
+        if (!send_jsonrpc("tools/list", {}, result, error)) {
+            spdlog::error("MCP HTTP: tools/list failed: {}", error);
+            return tools;
+        }
+        
+        if (result.contains("tools") && result["tools"].is_array()) {
+            for (const auto& t : result["tools"]) {
+                MCPTool tool;
+                tool.name = t.value("name", "");
+                tool.description = t.value("description", "");
+                tool.input_schema = t.value("inputSchema", nlohmann::json::object());
+                tools.push_back(tool);
+            }
+        }
+        
+        return tools;
     }
     
     MCPToolResult call_tool(
@@ -591,21 +654,265 @@ public:
         ProgressCallback progress = nullptr
     ) override {
         MCPToolResult result;
-        result.is_error = true;
-        result.error_message = "HTTP transport not yet implemented";
+        if (!connected_) {
+            result.is_error = true;
+            result.error_message = "Not connected";
+            return result;
+        }
+        
+        nlohmann::json params = {
+            {"name", name},
+            {"arguments", arguments}
+        };
+        
+        nlohmann::json resp;
+        std::string error;
+        if (!send_jsonrpc("tools/call", params, resp, error)) {
+            result.is_error = true;
+            result.error_message = error;
+            return result;
+        }
+        
+        result.is_error = resp.value("isError", false);
+        if (resp.contains("content") && resp["content"].is_array()) {
+            for (const auto& c : resp["content"]) {
+                MCPContent content;
+                content.type = c.value("type", "text");
+                content.text = c.value("text", "");
+                content.data = c.value("data", "");
+                content.mime_type = c.value("mimeType", "");
+                content.uri = c.value("uri", "");
+                result.content.push_back(content);
+            }
+        }
+        
         return result;
     }
     
-    std::vector<MCPPrompt> list_prompts() override { return {}; }
-    std::string get_prompt(const std::string& name, const nlohmann::json& args = {}) override { return ""; }
-    std::vector<MCPResource> list_resources() override { return {}; }
-    std::string read_resource(const std::string& uri) override { return ""; }
-    void set_logging_level(const std::string& level) override {}
+    // ========== Prompts API ==========
+    
+    std::vector<MCPPrompt> list_prompts() override {
+        std::vector<MCPPrompt> prompts;
+        if (!connected_) return prompts;
+        
+        nlohmann::json result;
+        std::string error;
+        if (!send_jsonrpc("prompts/list", {}, result, error)) {
+            return prompts;
+        }
+        
+        if (result.contains("prompts") && result["prompts"].is_array()) {
+            for (const auto& p : result["prompts"]) {
+                MCPPrompt prompt;
+                prompt.name = p.value("name", "");
+                prompt.description = p.value("description", "");
+                prompt.arguments = p.value("arguments", nlohmann::json::array());
+                prompts.push_back(prompt);
+            }
+        }
+        
+        return prompts;
+    }
+    
+    std::string get_prompt(
+        const std::string& name,
+        const nlohmann::json& arguments = {}
+    ) override {
+        if (!connected_) return "";
+        
+        nlohmann::json params = {{"name", name}};
+        if (!arguments.empty()) {
+            params["arguments"] = arguments;
+        }
+        
+        nlohmann::json result;
+        std::string error;
+        if (!send_jsonrpc("prompts/get", params, result, error)) {
+            return "";
+        }
+        
+        std::string text;
+        if (result.contains("messages") && result["messages"].is_array()) {
+            for (const auto& msg : result["messages"]) {
+                if (msg.contains("content")) {
+                    auto content = msg["content"];
+                    if (content.is_string()) {
+                        text += content.get<std::string>() + "\n";
+                    } else if (content.is_object() && content.contains("text")) {
+                        text += content["text"].get<std::string>() + "\n";
+                    }
+                }
+            }
+        }
+        
+        return text;
+    }
+    
+    // ========== Resources API ==========
+    
+    std::vector<MCPResource> list_resources() override {
+        std::vector<MCPResource> resources;
+        if (!connected_) return resources;
+        
+        nlohmann::json result;
+        std::string error;
+        if (!send_jsonrpc("resources/list", {}, result, error)) {
+            return resources;
+        }
+        
+        if (result.contains("resources") && result["resources"].is_array()) {
+            for (const auto& r : result["resources"]) {
+                MCPResource res;
+                res.uri = r.value("uri", "");
+                res.name = r.value("name", "");
+                res.description = r.value("description", "");
+                res.mime_type = r.value("mimeType", "");
+                resources.push_back(res);
+            }
+        }
+        
+        return resources;
+    }
+    
+    std::string read_resource(const std::string& uri) override {
+        if (!connected_) return "";
+        
+        nlohmann::json params = {{"uri", uri}};
+        nlohmann::json result;
+        std::string error;
+        if (!send_jsonrpc("resources/read", params, result, error)) {
+            return "";
+        }
+        
+        std::string text;
+        if (result.contains("contents") && result["contents"].is_array()) {
+            for (const auto& c : result["contents"]) {
+                text += c.value("text", "");
+            }
+        }
+        
+        return text;
+    }
+    
+    void set_logging_level(const std::string& level) override {
+        if (!connected_) return;
+        nlohmann::json params = {{"level", level}};
+        send_jsonrpc("logging/setLevel", params);
+    }
     
 private:
     std::string endpoint_;
     std::atomic<bool> connected_{false};
     MCPServerInfo server_info_;
+    std::mutex mutex_;
+    int request_id_{1};
+    
+    int next_id() { return request_id_++; }
+    
+    bool send_jsonrpc(const std::string& method, const nlohmann::json& params, nlohmann::json& result, std::string& error) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        nlohmann::json req = {
+            {"jsonrpc", "2.0"},
+            {"id", next_id()},
+            {"method", method}
+        };
+        if (!params.is_null() && !params.empty()) {
+            req["params"] = params;
+        }
+        
+        std::string response;
+        if (!http_post(endpoint_ + "/mcp", req.dump(), response, error)) {
+            return false;
+        }
+        
+        return parse_jsonrpc_response(response, req["id"].get<int>(), result, error);
+    }
+    
+    // Overload for notifications (no response expected)
+    void send_jsonrpc(const std::string& method, const nlohmann::json& params) {
+        nlohmann::json req = {
+            {"jsonrpc", "2.0"},
+            {"method", method}
+        };
+        if (!params.is_null() && !params.empty()) {
+            req["params"] = params;
+        }
+        
+        std::string response, error;
+        http_post(endpoint_ + "/mcp", req.dump(), response, error);
+    }
+    
+    void send_notification(const std::string& method) {
+        nlohmann::json req = {
+            {"jsonrpc", "2.0"},
+            {"method", method}
+        };
+        std::string response, error;
+        http_post(endpoint_ + "/mcp", req.dump(), response, error);
+    }
+    
+    bool http_post(const std::string& url, const std::string& body, std::string& response, std::string& error) {
+        CURL* curl = curl_easy_init();
+        if (!curl) {
+            error = "Failed to initialize curl";
+            return false;
+        }
+        
+        struct curl_slist* headers = nullptr;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers = curl_slist_append(headers, "Accept: application/json");
+        
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](void* contents, size_t size, size_t nmemb, std::string* s) {
+            s->append((char*)contents, size * nmemb);
+            return size * nmemb;
+        });
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        
+        CURLcode res = curl_easy_perform(curl);
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        
+        if (res != CURLE_OK) {
+            error = curl_easy_strerror(res);
+            return false;
+        }
+        
+        return true;
+    }
+    
+    bool parse_jsonrpc_response(const std::string& data, int expected_id, nlohmann::json& result, std::string& error) {
+        try {
+            auto j = nlohmann::json::parse(data);
+            if (j.value("jsonrpc", "") != "2.0") {
+                error = "Invalid JSON-RPC version";
+                return false;
+            }
+            if (j.value("id", 0) != expected_id) {
+                error = "Response ID mismatch";
+                return false;
+            }
+            if (j.contains("error")) {
+                error = j["error"].value("message", "Unknown error");
+                return false;
+            }
+            if (j.contains("result")) {
+                result = j["result"];
+                return true;
+            }
+            error = "No result in response";
+            return false;
+        } catch (const std::exception& e) {
+            error = std::string("JSON parse error: ") + e.what();
+            return false;
+        }
+    }
 };
 
 // ============================================================================
