@@ -82,12 +82,20 @@
               
               <t-tab-panel value="saved" label="保存的会话">
                 <div class="saved-sessions">
-                  <div v-if="sessions.length > 0" class="session-list">
-                    <div v-for="session in sessions" :key="session.id" class="session-card">
+                  <div class="search-box">
+                    <t-input v-model="sessionSearch" placeholder="搜索会话..." clearable>
+                      <template #prefix-icon>
+                        <span>🔍</span>
+                      </template>
+                    </t-input>
+                  </div>
+                  
+                  <div v-if="filteredSessions.length > 0" class="session-list">
+                    <div v-for="session in filteredSessions" :key="session.id" class="session-card">
                       <div class="session-info">
                         <h3>{{ session.name }}</h3>
                         <div class="session-meta">
-                          <span>{{ session.messageCount || session.messages?.length || 0 }} 条消息</span>
+                          <span>{{ session.messageCount || 0 }} 条消息</span>
                           <span>{{ formatDate(session.savedAt) }}</span>
                         </div>
                       </div>
@@ -102,24 +110,6 @@
                     </div>
                   </div>
                   <t-empty v-else description="暂无保存的会话" />
-                </div>
-              </t-tab-panel>
-              
-              <t-tab-panel value="settings" label="设置">
-                <div class="memory-settings">
-                  <t-form labelAlign="left">
-                    <t-form-item label="自动保存">
-                      <t-switch v-model="autoSave" @change="saveSettings" />
-                      <span class="setting-hint">对话时自动保存到本地</span>
-                    </t-form-item>
-                    <t-form-item label="最大保存数量">
-                      <t-input-number v-model="maxSavedSessions" :min="1" :max="50" @change="saveSettings" />
-                      <span class="setting-hint">最多保存的会话数量</span>
-                    </t-form-item>
-                    <t-form-item label="清除所有数据">
-                      <t-button theme="danger" @click="clearAllData">清除所有保存的会话</t-button>
-                    </t-form-item>
-                  </t-form>
                 </div>
               </t-tab-panel>
             </t-tabs>
@@ -210,12 +200,10 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { marked } from 'marked'
 import axios from 'axios'
 import { MessagePlugin } from 'tdesign-vue-next'
-
-const SETTINGS_KEY = 'ai-agent-settings'
 
 export default {
   setup() {
@@ -230,8 +218,7 @@ export default {
     const memoryTab = ref('current')
     const sessions = ref([])
     const sessionName = ref('')
-    const autoSave = ref(true)
-    const maxSavedSessions = ref(10)
+    const sessionSearch = ref('')
     const showImportModal = ref(false)
     const importFiles = ref([])
     
@@ -251,26 +238,17 @@ export default {
       { colKey: 'run_count', title: '运行次数', width: 100 },
       { colKey: 'op', title: '操作', width: 80 }
     ]
+    
+    // Computed: filtered sessions
+    const filteredSessions = computed(() => {
+      if (!sessionSearch.value.trim()) return sessions.value
+      const query = sessionSearch.value.toLowerCase()
+      return sessions.value.filter(s => 
+        s.name.toLowerCase().includes(query)
+      )
+    })
 
     // ===== Memory Functions (Backend API) =====
-    const loadSettings = () => {
-      try {
-        const saved = localStorage.getItem(SETTINGS_KEY)
-        if (saved) {
-          const settings = JSON.parse(saved)
-          autoSave.value = settings.autoSave ?? true
-          maxSavedSessions.value = settings.maxSavedSessions ?? 10
-        }
-      } catch (e) {}
-    }
-    
-    const saveSettings = () => {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-        autoSave: autoSave.value,
-        maxSavedSessions: maxSavedSessions.value
-      }))
-    }
-    
     const loadSessions = async () => {
       try {
         const res = await axios.get('/api/sessions')
@@ -289,10 +267,21 @@ export default {
     
     const saveSession = async () => {
       if (messages.value.length === 0) return
-      const name = sessionName.value || `会话 ${new Date().toLocaleString('zh-CN')}`
+      // Auto-generate name from first user message
+      let name = sessionName.value
+      if (!name) {
+        const firstUserMsg = messages.value.find(m => m.role === 'user')
+        if (firstUserMsg) {
+          // Use first 30 chars of first message as name
+          name = firstUserMsg.content.slice(0, 30)
+          if (firstUserMsg.content.length > 30) name += '...'
+        } else {
+          name = `会话 ${new Date().toLocaleString('zh-CN')}`
+        }
+      }
       try {
         const res = await axios.post('/api/sessions', { name })
-        MessagePlugin.success('会话已保存: ' + res.data.id)
+        MessagePlugin.success('会话已保存')
         sessionName.value = ''
         loadSessions()  // Refresh list
       } catch (e) {
@@ -510,7 +499,6 @@ export default {
     }
 
     onMounted(() => {
-      loadSettings()
       loadSessions()
       loadCurrentConversation()
       loadTools()
@@ -521,10 +509,10 @@ export default {
       view, messages, input, loading, tools, msgBox, 
       send, clearChat, renderMd,
       // Memory
-      memoryTab, sessions, sessionName, autoSave, maxSavedSessions,
+      memoryTab, sessions, sessionSearch, filteredSessions, sessionName, 
       showImportModal, importFiles,
       saveSession, loadSession, deleteSession, exportSession, importSession,
-      saveSettings, clearAllData, formatDate,
+      clearAllData, formatDate,
       // Cron
       cronTasks, cronRunning, cronLoading, showAddModal, newTask, cronColumns,
       loadCronTasks, toggleCron, addTask, toggleTask, deleteTask
@@ -617,6 +605,7 @@ body { font-family: -apple-system, sans-serif; }
 .memory-content code { background: #f5f5f5; padding: 2px 4px; border-radius: 2px; }
 
 .saved-sessions { padding: 16px 0; }
+.search-box { margin-bottom: 16px; }
 .session-list { display: flex; flex-direction: column; gap: 12px; }
 .session-card {
   display: flex;
@@ -631,9 +620,6 @@ body { font-family: -apple-system, sans-serif; }
 .session-info h3 { margin: 0 0 8px 0; font-size: 16px; }
 .session-meta { display: flex; gap: 16px; font-size: 12px; color: #999; }
 .session-card .session-actions { display: flex; gap: 8px; margin: 0; }
-
-.memory-settings { padding: 16px 0; }
-.setting-hint { margin-left: 12px; font-size: 12px; color: #999; }
 
 /* Cron */
 .cron-header {
