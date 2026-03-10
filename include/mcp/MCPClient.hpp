@@ -6,8 +6,11 @@
 #include <functional>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <boost/asio.hpp>
 
 namespace agent::mcp {
+
+namespace asio = boost::asio;
 
 // MCP Server information
 struct MCPServerInfo {
@@ -80,7 +83,7 @@ public:
     // Server info
     virtual MCPServerInfo get_server_info() const = 0;
     
-    // Tools API
+    // Tools API (synchronous)
     virtual std::vector<MCPTool> list_tools() = 0;
     virtual MCPToolResult call_tool(
         const std::string& name,
@@ -88,19 +91,60 @@ public:
         ProgressCallback progress = nullptr
     ) = 0;
     
-    // Prompts API
+    // Prompts API (synchronous)
     virtual std::vector<MCPPrompt> list_prompts() = 0;
     virtual std::string get_prompt(
         const std::string& name,
         const nlohmann::json& arguments = {}
     ) = 0;
     
-    // Resources API
+    // Resources API (synchronous)
     virtual std::vector<MCPResource> list_resources() = 0;
     virtual std::string read_resource(const std::string& uri) = 0;
     
     // Logging
     virtual void set_logging_level(const std::string& level) = 0;
+    
+    // ===== Async API (C++20 coroutines) =====
+    
+    // Async connection
+    virtual asio::awaitable<bool> connect_async(const std::string& endpoint) {
+        co_return connect(endpoint);
+    }
+    
+    // Async tools
+    virtual asio::awaitable<std::vector<MCPTool>> list_tools_async() {
+        co_return list_tools();
+    }
+    
+    virtual asio::awaitable<MCPToolResult> call_tool_async(
+        const std::string& name,
+        const nlohmann::json& arguments,
+        ProgressCallback progress = nullptr
+    ) {
+        co_return call_tool(name, arguments, progress);
+    }
+    
+    // Async prompts
+    virtual asio::awaitable<std::vector<MCPPrompt>> list_prompts_async() {
+        co_return list_prompts();
+    }
+    
+    virtual asio::awaitable<std::string> get_prompt_async(
+        const std::string& name,
+        const nlohmann::json& arguments = {}
+    ) {
+        co_return get_prompt(name, arguments);
+    }
+    
+    // Async resources
+    virtual asio::awaitable<std::vector<MCPResource>> list_resources_async() {
+        co_return list_resources();
+    }
+    
+    virtual asio::awaitable<std::string> read_resource_async(const std::string& uri) {
+        co_return read_resource(uri);
+    }
 };
 
 // Factory for creating MCP clients

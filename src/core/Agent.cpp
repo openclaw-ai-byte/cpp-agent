@@ -368,4 +368,49 @@ mcp::MCPToolResult Agent::call_mcp_tool(const std::string& server_name, const st
     return mcp::MCPToolResult{.is_error = true, .error_message = "MCP server not found: " + server_name};
 }
 
+// ===== Async MCP support =====
+
+asio::awaitable<bool> Agent::connect_mcp_server_async(const std::string& endpoint, const std::string& transport) {
+    auto client = mcp::MCPClientFactory::create(transport);
+    if (!client) {
+        spdlog::error("Failed to create MCP client for transport: {}", transport);
+        co_return false;
+    }
+    
+    bool success = co_await client->connect_async(endpoint);
+    if (!success) {
+        spdlog::error("Failed to connect to MCP server: {}", endpoint);
+        co_return false;
+    }
+    
+    mcp_clients_.push_back(std::shared_ptr<mcp::MCPClient>(client.release()));
+    
+    // Register MCP tools with ToolRegistry
+    auto tools = mcp_clients_.back()->list_tools();
+    for (const auto& tool : tools) {
+        spdlog::info("MCP tool discovered: {}", tool.name);
+    }
+    
+    co_return true;
+}
+
+asio::awaitable<std::vector<mcp::MCPTool>> Agent::list_mcp_tools_async() {
+    std::vector<mcp::MCPTool> all_tools;
+    for (auto& client : mcp_clients_) {
+        auto tools = co_await client->list_tools_async();
+        all_tools.insert(all_tools.end(), tools.begin(), tools.end());
+    }
+    co_return all_tools;
+}
+
+asio::awaitable<mcp::MCPToolResult> Agent::call_mcp_tool_async(const std::string& server_name, const std::string& tool_name, const nlohmann::json& arguments) {
+    for (auto& client : mcp_clients_) {
+        auto info = client->get_server_info();
+        if (info.name == server_name || server_name.empty()) {
+            co_return co_await client->call_tool_async(tool_name, arguments);
+        }
+    }
+    co_return mcp::MCPToolResult{.is_error = true, .error_message = "MCP server not found: " + server_name};
+}
+
 } // namespace agent

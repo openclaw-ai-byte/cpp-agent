@@ -9,6 +9,9 @@
 #include <atomic>
 #include <sstream>
 #include <curl/curl.h>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/thread_pool.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -555,6 +558,92 @@ private:
         return true;
 #endif
     }
+    
+    // ===== Async API (C++20 coroutines with thread pool) =====
+    
+    asio::awaitable<bool> connect_async(const std::string& endpoint) override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this, endpoint]() -> asio::awaitable<bool> {
+                co_return connect(endpoint);
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<std::vector<MCPTool>> list_tools_async() override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this]() -> asio::awaitable<std::vector<MCPTool>> {
+                co_return list_tools();
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<MCPToolResult> call_tool_async(
+        const std::string& name,
+        const nlohmann::json& arguments,
+        ProgressCallback progress = nullptr
+    ) override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this, name, arguments, progress]() -> asio::awaitable<MCPToolResult> {
+                co_return call_tool(name, arguments, progress);
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<std::vector<MCPPrompt>> list_prompts_async() override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this]() -> asio::awaitable<std::vector<MCPPrompt>> {
+                co_return list_prompts();
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<std::string> get_prompt_async(
+        const std::string& name,
+        const nlohmann::json& arguments = {}
+    ) override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this, name, arguments]() -> asio::awaitable<std::string> {
+                co_return get_prompt(name, arguments);
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<std::vector<MCPResource>> list_resources_async() override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this]() -> asio::awaitable<std::vector<MCPResource>> {
+                co_return list_resources();
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<std::string> read_resource_async(const std::string& uri) override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this, uri]() -> asio::awaitable<std::string> {
+                co_return read_resource(uri);
+            },
+            asio::use_awaitable
+        );
+    }
 };
 
 // ============================================================================
@@ -912,6 +1001,92 @@ private:
             error = std::string("JSON parse error: ") + e.what();
             return false;
         }
+    }
+    
+    // ===== Async API (C++20 coroutines with thread pool) =====
+    
+    asio::awaitable<bool> connect_async(const std::string& endpoint) override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this, endpoint]() -> asio::awaitable<bool> {
+                co_return connect(endpoint);
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<std::vector<MCPTool>> list_tools_async() override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this]() -> asio::awaitable<std::vector<MCPTool>> {
+                co_return list_tools();
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<MCPToolResult> call_tool_async(
+        const std::string& name,
+        const nlohmann::json& arguments,
+        ProgressCallback progress = nullptr
+    ) override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this, name, arguments, progress]() -> asio::awaitable<MCPToolResult> {
+                co_return call_tool(name, arguments, progress);
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<std::vector<MCPPrompt>> list_prompts_async() override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this]() -> asio::awaitable<std::vector<MCPPrompt>> {
+                co_return list_prompts();
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<std::string> get_prompt_async(
+        const std::string& name,
+        const nlohmann::json& arguments = {}
+    ) override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this, name, arguments]() -> asio::awaitable<std::string> {
+                co_return get_prompt(name, arguments);
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<std::vector<MCPResource>> list_resources_async() override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this]() -> asio::awaitable<std::vector<MCPResource>> {
+                co_return list_resources();
+            },
+            asio::use_awaitable
+        );
+    }
+    
+    asio::awaitable<std::string> read_resource_async(const std::string& uri) override {
+        auto executor = co_await asio::this_coro::executor;
+        co_return co_await asio::co_spawn(
+            executor,
+            [this, uri]() -> asio::awaitable<std::string> {
+                co_return read_resource(uri);
+            },
+            asio::use_awaitable
+        );
     }
 };
 

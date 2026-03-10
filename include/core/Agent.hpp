@@ -118,6 +118,15 @@ public:
     /// Call an MCP tool
     mcp::MCPToolResult call_mcp_tool(const std::string& server_name, const std::string& tool_name, const nlohmann::json& arguments);
     
+    /// Async: Connect to MCP server
+    asio::awaitable<bool> connect_mcp_server_async(const std::string& endpoint, const std::string& transport = "stdio");
+    
+    /// Async: List MCP tools
+    asio::awaitable<std::vector<mcp::MCPTool>> list_mcp_tools_async();
+    
+    /// Async: Call MCP tool
+    asio::awaitable<mcp::MCPToolResult> call_mcp_tool_async(const std::string& server_name, const std::string& tool_name, const nlohmann::json& arguments);
+    
     // ===== Conversation management =====
     
     void clear_conversation();
