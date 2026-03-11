@@ -25,6 +25,7 @@ target("agent-core")
     add_files("src/skills/*.cpp")
     add_files("src/mcp/*.cpp")
     add_files("src/cron/*.cpp")
+    add_files("src/memory/*.cpp")
     
     add_cxxflags("-Wall", "-Wextra", "-Wpedantic")
 

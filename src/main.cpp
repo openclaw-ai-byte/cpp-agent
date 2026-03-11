@@ -3,6 +3,10 @@
 #include "cron/CronManager.hpp"
 #include "tools/ToolRegistry.hpp"
 #include "skills/SkillRegistry.hpp"
+#include "memory/SelfEvolution.hpp"
+#include "memory/GoalTracker.hpp"
+#include "memory/SessionAnalyzer.hpp"
+#include "memory/SleepProcessor.hpp"
 #include "http/httplib.h"
 #include <spdlog/spdlog.h>
 #include <iostream>
@@ -210,6 +214,247 @@ void run_server(std::shared_ptr<agent::Agent> agent, std::shared_ptr<agent::Cron
     // ===== Health =====
     svr.Get("/api/health", [](auto&, auto& res) { 
         res.set_content(R"({"status":"ok"})", "application/json"); 
+    });
+    
+    
+    // ===== Self-Evolution API =====
+    
+    // Goals
+    svr.Get("/api/goals", [](auto&, auto& res) {
+        auto tracker = agent::get_goal_tracker();
+        if (!tracker) {
+            res.status = 500;
+            res.set_content(R"({"error":"goal tracker not initialized"})", "application/json");
+            return;
+        }
+        auto goals = tracker->get_all_goals();
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& g : goals) arr.push_back(g.to_json());
+        res.set_content(nlohmann::json{{"goals", arr}, {"count", goals.size()}}.dump(), "application/json");
+    });
+    
+    svr.Post("/api/goals", [](auto& req, auto& res) {
+        try {
+            auto tracker = agent::get_goal_tracker();
+            if (!tracker) {
+                res.status = 500;
+                res.set_content(R"({"error":"goal tracker not initialized"})", "application/json");
+                return;
+            }
+            auto body = nlohmann::json::parse(req.body);
+            std::string title = body.value("title", "");
+            if (title.empty()) {
+                res.status = 400;
+                res.set_content(R"({"error":"title required"})", "application/json");
+                return;
+            }
+            std::string desc = body.value("description", "");
+            std::string priority_str = body.value("priority", "medium");
+            agent::GoalPriority priority = agent::GoalPriority::Medium;
+            if (priority_str == "low") priority = agent::GoalPriority::Low;
+            else if (priority_str == "high") priority = agent::GoalPriority::High;
+            else if (priority_str == "critical") priority = agent::GoalPriority::Critical;
+            
+            auto goal = tracker->create_goal(title, desc, priority);
+            res.set_content(nlohmann::json{{"success", true}, {"goal", goal.to_json()}}.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(nlohmann::json{{"error", e.what()}}.dump(), "application/json");
+        }
+    });
+    
+    svr.Get("/api/goals/attention", [](auto&, auto& res) {
+        auto tracker = agent::get_goal_tracker();
+        if (!tracker) {
+            res.status = 500;
+            res.set_content(R"({"error":"goal tracker not initialized"})", "application/json");
+            return;
+        }
+        auto goals = tracker->get_goals_needing_attention();
+        auto reminders = tracker->generate_reminders();
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& g : goals) arr.push_back(g.to_json());
+        res.set_content(nlohmann::json{{"goals", arr}, {"reminders", reminders}}.dump(), "application/json");
+    });
+    
+    svr.Get("/api/goals/report", [](auto&, auto& res) {
+        auto tracker = agent::get_goal_tracker();
+        if (!tracker) {
+            res.status = 500;
+            res.set_content(R"({"error":"goal tracker not initialized"})", "application/json");
+            return;
+        }
+        std::string report = tracker->generate_report();
+        res.set_content(nlohmann::json{
+            {"report", report},
+            {"stats", {
+                {"total", tracker->total_goals()},
+                {"completed", tracker->completed_goals()},
+                {"in_progress", tracker->in_progress_goals()},
+                {"average_progress", tracker->average_progress()}
+            }}
+        }.dump(), "application/json");
+    });
+    
+    svr.Post("/api/goals/([^/]+)/checkin", [](auto& req, auto& res) {
+        try {
+            auto tracker = agent::get_goal_tracker();
+            if (!tracker) {
+                res.status = 500;
+                res.set_content(R"({"error":"goal tracker not initialized"})", "application/json");
+                return;
+            }
+            std::string goal_id = req.matches[1];
+            auto body = nlohmann::json::parse(req.body);
+            double progress = body.value("progress", 0.0);
+            std::string notes = body.value("notes", "");
+            std::vector<std::string> milestones;
+            if (body.contains("milestones")) {
+                milestones = body["milestones"].template get<std::vector<std::string>>();
+            }
+            if (tracker->check_in(goal_id, progress, notes, milestones)) {
+                auto goal = tracker->get_goal(goal_id);
+                res.set_content(nlohmann::json{{"success", true}, {"goal", goal ? goal->to_json() : nlohmann::json()}}.dump(), "application/json");
+            } else {
+                res.status = 404;
+                res.set_content(R"({"error":"goal not found"})", "application/json");
+            }
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(nlohmann::json{{"error", e.what()}}.dump(), "application/json");
+        }
+    });
+    
+    // Patterns & Insights
+    svr.Get("/api/patterns", [](auto& req, auto& res) {
+        auto analyzer = agent::get_session_analyzer();
+        if (!analyzer) {
+            res.status = 500;
+            res.set_content(R"({"error":"session analyzer not initialized"})", "application/json");
+            return;
+        }
+        auto patterns = analyzer->get_patterns();
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& p : patterns) arr.push_back(p.to_json());
+        res.set_content(nlohmann::json{{"patterns", arr}, {"count", patterns.size()}}.dump(), "application/json");
+    });
+    
+    svr.Post("/api/patterns/detect", [](auto&, auto& res) {
+        auto analyzer = agent::get_session_analyzer();
+        if (!analyzer) {
+            res.status = 500;
+            res.set_content(R"({"error":"session analyzer not initialized"})", "application/json");
+            return;
+        }
+        auto patterns = analyzer->detect_patterns();
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& p : patterns) arr.push_back(p.to_json());
+        res.set_content(nlohmann::json{{"success", true}, {"patterns", arr}, {"count", patterns.size()}}.dump(), "application/json");
+    });
+    
+    svr.Get("/api/insights", [](auto&, auto& res) {
+        auto analyzer = agent::get_session_analyzer();
+        if (!analyzer) {
+            res.status = 500;
+            res.set_content(R"({"error":"session analyzer not initialized"})", "application/json");
+            return;
+        }
+        auto insights = analyzer->generate_insights();
+        auto suggestions = analyzer->get_improvement_suggestions();
+        res.set_content(nlohmann::json{{"insights", insights}, {"suggestions", suggestions}}.dump(), "application/json");
+    });
+    
+    // Sleep & Memory
+    svr.Post("/api/sleep", [](auto&, auto& res) {
+        auto processor = agent::get_sleep_processor();
+        if (!processor) {
+            res.status = 500;
+            res.set_content(R"({"error":"sleep processor not initialized"})", "application/json");
+            return;
+        }
+        auto result = processor->process({});
+        res.set_content(result.to_json().dump(), "application/json");
+    });
+    
+    svr.Get("/api/memory", [](auto&, auto& res) {
+        auto processor = agent::get_sleep_processor();
+        if (!processor) {
+            res.status = 500;
+            res.set_content(R"({"error":"sleep processor not initialized"})", "application/json");
+            return;
+        }
+        auto memories = processor->get_long_term_memory();
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& m : memories) arr.push_back(m.to_json());
+        res.set_content(nlohmann::json{{"memories", arr}, {"count", memories.size()}}.dump(), "application/json");
+    });
+    
+    svr.Get("/api/predictions", [](auto&, auto& res) {
+        auto processor = agent::get_sleep_processor();
+        if (!processor) {
+            res.status = 500;
+            res.set_content(R"({"error":"sleep processor not initialized"})", "application/json");
+            return;
+        }
+        auto predictions = processor->get_predictions();
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& p : predictions) arr.push_back(p.to_json());
+        res.set_content(nlohmann::json{{"predictions", arr}, {"count", predictions.size()}}.dump(), "application/json");
+    });
+    
+    svr.Get("/api/wake-report", [](auto&, auto& res) {
+        auto processor = agent::get_sleep_processor();
+        auto tracker = agent::get_goal_tracker();
+        auto analyzer = agent::get_session_analyzer();
+        if (!processor || !tracker || !analyzer) {
+            res.status = 500;
+            res.set_content(R"({"error":"self-evolution system not initialized"})", "application/json");
+            return;
+        }
+        agent::SleepResult sr;
+        sr.patterns_detected = analyzer->get_patterns().size();
+        sr.reminders = tracker->generate_reminders();
+        sr.recommendations = analyzer->get_improvement_suggestions();
+        for (const auto& p : processor->get_predictions()) {
+            sr.predicted_tasks.push_back(p.task);
+        }
+        std::string report = processor->generate_wake_report(sr);
+        res.set_content(nlohmann::json{{"report", report}}.dump(), "application/json");
+    });
+    
+    svr.Post("/api/sessions/start", [](auto&, auto& res) {
+        auto analyzer = agent::get_session_analyzer();
+        if (!analyzer) {
+            res.status = 500;
+            res.set_content(R"({"error":"session analyzer not initialized"})", "application/json");
+            return;
+        }
+        std::string session_id = analyzer->start_session();
+        res.set_content(nlohmann::json{{"success", true}, {"session_id", session_id}}.dump(), "application/json");
+    });
+    
+    svr.Post("/api/sessions/end", [](auto& req, auto& res) {
+        try {
+            auto analyzer = agent::get_session_analyzer();
+            if (!analyzer) {
+                res.status = 500;
+                res.set_content(R"({"error":"session analyzer not initialized"})", "application/json");
+                return;
+            }
+            auto body = nlohmann::json::parse(req.body);
+            std::string summary = body.value("summary", "");
+            auto s = analyzer->end_session(summary);
+            res.set_content(nlohmann::json{
+                {"success", true},
+                {"session_id", s.session_id},
+                {"message_count", s.message_count},
+                {"tool_call_count", s.tool_call_count},
+                {"error_count", s.error_count}
+            }.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(nlohmann::json{{"error", e.what()}}.dump(), "application/json");
+        }
     });
     
     // ===== Session API =====
@@ -443,6 +688,7 @@ int main(int argc, char* argv[]) {
     }
     
     agent::register_builtin_tools();
+    agent::init_self_evolution(".");  // Initialize self-evolution system
     spdlog::info("Tools: {}", agent::ToolRegistry::instance().list_tools().size());
     
     // Load config
